@@ -1,4 +1,4 @@
-import type { AABB, BuildingEntranceDef, CircleCollider, DistrictId, StuntRampDef, Vec2 } from '../core/types';
+import type { AABB, BuildingEntranceDef, CircleCollider, DistrictId, LandmarkDef, StuntRampDef, Vec2 } from '../core/types';
 
 export const WORLD_HALF = 320;
 export const ROAD_COORDS = [-180, -90, 0, 90, 180] as const;
@@ -14,7 +14,7 @@ export const LIGHTHOUSE_POS: Vec2 = { x: -234, z: -234 };
 export const HOSPITAL_RESPAWN: Vec2 = { x: 180, z: 90 };
 export const PRECINCT_RESPAWN: Vec2 = { x: -90, z: 0 };
 
-// Enterable Real-World Building Entrances (right along sidewalks so easy to walk in!)
+// Enterable Real-World Building Entrances (seamless walk-in portals along sidewalks!)
 export const BUILDING_ENTRANCES: BuildingEntranceDef[] = [
   {
     id: 'mall',
@@ -28,11 +28,20 @@ export const BUILDING_ENTRANCES: BuildingEntranceDef[] = [
   {
     id: 'cafe',
     name: 'SUNSET BEACH CAFÉ',
-    subtitle: 'Ocean Drive Espresso Bar & Pastries',
+    subtitle: 'Ocean Drive Espresso Bar, Pastries & Date Spot',
     x: 167,
     z: 45,
     facingAngle: Math.PI / 2,
     color: 0xfacc15,
+  },
+  {
+    id: 'clothes',
+    name: 'VICE DRIP CLOTHING STORE',
+    subtitle: 'Designer Suits, Streetwear & Outfit Fitting Room',
+    x: 167,
+    z: -10,
+    facingAngle: Math.PI / 2,
+    color: 0xc084fc,
   },
   {
     id: 'office',
@@ -45,15 +54,35 @@ export const BUILDING_ENTRANCES: BuildingEntranceDef[] = [
   },
 ];
 
-// Marine Docks (Speedboats moored here!) & Helipads (Flyable Helicopters!)
+// Marine Docks (Speedboats moored cleanly in open navigable water beside walkable jetties!)
 export const BOAT_DOCK_POSITIONS: { x: number; z: number; heading: number; name: string }[] = [
-  { x: 244, z: 22, heading: Math.PI / 2, name: 'Ocean Pier Marina' },
-  { x: 256, z: 118, heading: Math.PI / 3, name: 'Sunset Beach Cove' },
+  { x: 252, z: 22, heading: Math.PI / 2, name: 'Ocean Pier Marina' },
+  { x: 256, z: 118, heading: Math.PI / 2, name: 'Sunset Beach Cove' },
 ];
 
 export const HELIPAD_POSITIONS: { x: number; z: number; heading: number; name: string }[] = [
   { x: 150, z: 135, heading: -Math.PI / 2, name: 'Ocean Drive Helipad' },
   { x: 45, z: 20, heading: Math.PI, name: 'Starlight Plaza Helipad' },
+];
+
+// Complete Landmark Directory for the Complex Tactical GPS Map!
+export const CITY_LANDMARKS: LandmarkDef[] = [
+  { id: 'lm_cafe', name: 'Sunset Beach Café', category: 'building', x: 167, z: 45, color: '#facc15', description: 'Oceanfront café — great espresso & date spot with Nova!', canInviteNova: true },
+  { id: 'lm_mall', name: 'Neon Coast Shopping Mall', category: 'building', x: 13, z: 42, color: '#ff2a85', description: '2-story mall with moving escalators, food court queue & shops.', canInviteNova: true },
+  { id: 'lm_clothes', name: 'VICE Drip Clothing Store', category: 'building', x: 167, z: -10, color: '#c084fc', description: 'Try on & buy suits, streetwear, resort wear & tactical outfits.', canInviteNova: true },
+  { id: 'lm_office', name: 'Apex Corporate Tower', category: 'building', x: -13, z: -42, color: '#00f5ff', description: 'Executive office lobby with Syndicate intel workstations.' },
+  { id: 'lm_paynspray', name: 'Neon Pay-n-Spray Garage', category: 'service', x: PAY_N_SPRAY_POS.x, z: PAY_N_SPRAY_POS.z, color: '#00f5ff', description: 'Drive-through free repaint, 100% repair & clears all Wanted Stars!' },
+  { id: 'lm_marina', name: 'Ocean Pier Marina (Speedboat)', category: 'transport', x: 242, z: 22, color: '#38bdf8', description: 'Board the luxury Neon Wave Speedboat & cruise the open ocean!' },
+  { id: 'lm_cove', name: 'Sunset Beach Cove (Speedboat)', category: 'transport', x: 242, z: 118, color: '#38bdf8', description: 'South beach speedboat launch jetty.' },
+  { id: 'lm_heli_ocean', name: 'Ocean Drive Helipad', category: 'transport', x: 150, z: 135, color: '#f8fafc', description: 'Fly the Skyhawk Twin-Turbine helicopter over Neon Coast!' },
+  { id: 'lm_heli_dt', name: 'Starlight Plaza Helipad', category: 'transport', x: 45, z: 20, color: '#f8fafc', description: 'Downtown central helipad surrounded by skyscrapers.' },
+  { id: 'lm_hotel', name: 'Palm Royale Resort & Valet', category: 'landmark', x: VALET_PLAZA_POS.x, z: VALET_PLAZA_POS.z, color: '#ff47a3', description: 'Luxury Ocean Drive hotel & Apex-X Hypercar valet plaza.' },
+  { id: 'lm_pier', name: 'Ocean Pier & Ferris Wheel', category: 'landmark', x: 268, z: 0, color: '#fb923c', description: 'Giant glowing Ferris wheel, pier mega-ramp & Getaway Yacht.', canInviteNova: true },
+  { id: 'lm_vault', name: 'Fort Bayview Vault (Causeway)', category: 'landmark', x: VAULT_PLAZA_POS.x, z: VAULT_PLAZA_POS.z, color: '#ff3b5c', description: 'Heavily guarded Crimson Syndicate compound across the Causeway bridges.' },
+  { id: 'lm_lighthouse', name: 'Bayview Lighthouse Overlook', category: 'landmark', x: LIGHTHOUSE_POS.x, z: LIGHTHOUSE_POS.z, color: '#fde047', description: 'Scenic northwest coastal lighthouse.', canInviteNova: true },
+  { id: 'lm_race_ocean', name: 'Race: Ocean Drive Sprint', category: 'race', x: 180, z: 145, color: '#22ff88', description: 'High-speed coastal street race ($5,000 prize).' },
+  { id: 'lm_race_neon', name: 'Race: Midnight Neon Circuit', category: 'race', x: 0, z: 135, color: '#22ff88', description: 'Downtown skyscraper circuit ($6,500 prize).' },
+  { id: 'lm_race_bay', name: 'Race: Causeway Bridge Run', category: 'race', x: -90, z: -180, color: '#22ff88', description: 'Cross-island bridge run ($8,000 prize).' },
 ];
 
 export const DISTRICT_NAMES: Record<DistrictId, string> = {
@@ -220,10 +249,13 @@ export class CityGrid {
     return false;
   }
 
-  /** True if safe navigable water for boats (includes under Causeway bridges!) */
+  /** True if safe navigable water for Speedboats (wide open ocean, shoreline from x>=236 & under Causeway bridges!) */
   public isNavigableWater(x: number, z: number): boolean {
-    if (this.isOnPier(x, z)) return false;
-    if (x < -254 || x > 246 || z < -254 || z > 246) return true;
+    // Keep clear of the Ocean Pier wooden pilings (x: 204..306, |z| <= 14.5)
+    if (x >= 204 && x <= 308 && Math.abs(z) <= 14.5) return false;
+    // Wide open ocean all around the island!
+    if (x < -252 || x > 236 || z < -252 || z > 250) return true;
+    // Causeway bay channel (pass freely right underneath both arched Causeway bridges!)
     if (x >= -140 && x <= -110 && z <= -110) return true;
     if (z >= -140 && z <= -110 && x <= -110) return true;
     return false;

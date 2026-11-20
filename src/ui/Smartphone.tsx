@@ -1,158 +1,517 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  Backpack,
+  Battery,
   Car,
   CheckCircle2,
+  ChevronLeft,
   Cpu,
   Flag,
+  MessageCircle,
   Music2,
   Paintbrush,
-  Radio,
+  Send,
+  Shirt,
   ShoppingBag,
+  Signal,
   Target,
+  Wifi,
   X,
 } from 'lucide-react';
 import type { HudSnapshot, RadioStationId, VehicleType } from '../core/types';
+import { OUTFITS } from '../entities/PlayerController';
 import { CAMPAIGN_MISSIONS } from '../missions/missionData';
 import { STREET_RACES } from '../systems/WorldActivities';
 import { SpotifyConnectPanel } from './SpotifyWidget';
 
+export type PhoneAppId = 'home' | 'messages' | 'spotify' | 'missions' | 'bag' | 'wardrobe' | 'fleet' | 'hack' | 'shop';
+
 interface SmartphoneProps {
   hud: HudSnapshot;
+  initialApp?: PhoneAppId;
   spotifyEmbedUrl: string;
   onSelectSpotify: (embedUrl: string, title: string) => void;
   onToggleSpotifyActive: (active: boolean) => void;
   onClose: () => void;
+  onSendMessageToNova: (msg: string) => void;
+  onSummonNova: () => void;
   onLaunchMission: (id: string) => void;
   onLaunchRace: (id: string) => void;
   onTriggerHack: (kind: 'traffic' | 'emp' | 'spoof') => void;
   onBuyUpgrade: (key: 'nitro' | 'armor' | 'blaster' | 'hack') => void;
   onSummonVehicle: (type: VehicleType) => void;
   onRepaintVehicle: () => void;
+  onUseInventoryItem: (id: string) => void;
+  onEquipOutfit: (id: string) => void;
   onSetRadio: (st: RadioStationId) => void;
-  onSetVolumes: (m: number, mus: number, sfx: number) => void;
 }
-
-type AppTab = 'heist' | 'hack' | 'shop' | 'garage' | 'spotify';
 
 export const Smartphone: React.FC<SmartphoneProps> = ({
   hud,
+  initialApp = 'home',
   spotifyEmbedUrl,
   onSelectSpotify,
   onToggleSpotifyActive,
   onClose,
+  onSendMessageToNova,
+  onSummonNova,
   onLaunchMission,
   onLaunchRace,
   onTriggerHack,
   onBuyUpgrade,
   onSummonVehicle,
   onRepaintVehicle,
+  onUseInventoryItem,
+  onEquipOutfit,
   onSetRadio,
-  onSetVolumes,
 }) => {
-  const [tab, setTab] = useState<AppTab>('heist');
-  const [musicSubTab, setMusicSubTab] = useState<'spotify' | 'fm'>('spotify');
+  const [app, setApp] = useState<PhoneAppId>(initialApp);
+  const [dmInput, setDmInput] = useState('');
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
-  const upgradeCards = [
-    {
-      key: 'nitro' as const,
-      name: 'TURBO NITRO OVERDRIVE',
-      desc: '+8% Top Speed & faster Nitro recharge per tier',
-      lvl: hud.upgrades.nitroLevel,
-      costs: [4000, 8000, 14000],
-    },
-    {
-      key: 'armor' as const,
-      name: 'CARBON CHASSIS ARMOR',
-      desc: '-18% crash & gunfire damage + extra player HP',
-      lvl: hud.upgrades.armorLevel,
-      costs: [4000, 8000, 14000],
-    },
-    {
-      key: 'blaster' as const,
-      name: 'AK-47 TACTICAL BARREL & OPTIC',
-      desc: 'Faster fire rate & +12 damage per 7.62mm round',
-      lvl: hud.upgrades.blasterLevel,
-      costs: [3500, 7500, 13000],
-    },
-    {
-      key: 'hack' as const,
-      name: 'NET-HACK QUANTUM CHIP',
-      desc: '-18% Net-Hack cooldown & wider EMP shockwave',
-      lvl: hud.upgrades.hackLevel,
-      costs: [4500, 9000, 15000],
-    },
+  useEffect(() => {
+    setApp(initialApp);
+  }, [initialApp]);
+
+  useEffect(() => {
+    if (app === 'messages' && chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [app, hud.nova.history.length, hud.nova.thinking]);
+
+  const sendDm = (overrideText?: string) => {
+    const txt = (overrideText ?? dmInput).trim();
+    if (!txt || hud.nova.thinking) return;
+    onSendMessageToNova(txt);
+    if (!overrideText) setDmInput('');
+  };
+
+  const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  const apps: { id: PhoneAppId; label: string; bg: string; icon: React.ReactNode; badge?: string }[] = [
+    { id: 'messages', label: 'Messages', bg: 'linear-gradient(135deg, #ec4899, #8b5cf6)', icon: <MessageCircle size={24} />, badge: 'Nova' },
+    { id: 'spotify', label: 'Spotify', bg: 'linear-gradient(135deg, #1db954, #15803d)', icon: <Music2 size={24} /> },
+    { id: 'missions', label: 'To-Do Ops', bg: 'linear-gradient(135deg, #f59e0b, #ea580c)', icon: <Target size={24} />, badge: `${hud.completedMissionIds.length}/4` },
+    { id: 'fleet', label: 'Garage', bg: 'linear-gradient(135deg, #0ea5e9, #2563eb)', icon: <Car size={24} /> },
+    { id: 'bag', label: 'My Bag', bg: 'linear-gradient(135deg, #10b981, #059669)', icon: <Backpack size={24} />, badge: `${hud.inventory.reduce((a, b) => a + b.qty, 0)}` },
+    { id: 'wardrobe', label: 'Outfits', bg: 'linear-gradient(135deg, #a855f7, #ec4899)', icon: <Shirt size={24} /> },
+    { id: 'hack', label: 'Net-Hack', bg: 'linear-gradient(135deg, #06b6d4, #0284c7)', icon: <Cpu size={24} /> },
+    { id: 'shop', label: 'Upgrades', bg: 'linear-gradient(135deg, #f43f5e, #be123c)', icon: <ShoppingBag size={24} /> },
   ];
 
   const garageCars: { type: VehicleType; label: string; tag: string; color: string }[] = [
-    { type: 'hypercar', label: 'APEX-X HYPERCAR', tag: 'ULTRA FAST • COCKPIT', color: '#ff1e7a' },
-    { type: 'muscle', label: 'MIAMI V8 MUSCLE', tag: 'DRIFT KING • V8', color: '#00c8ff' },
-    { type: 'helicopter', label: 'SKYHAWK HELICOPTER', tag: 'AERIAL FLIGHT • PAD', color: '#38bdf8' },
-    { type: 'speedboat', label: 'NEON WAVE SPEEDBOAT', tag: 'MARINE JET • MARINA', color: '#00f5ff' },
-    { type: 'interceptor', label: 'NCPD INTERCEPTOR', tag: 'SIRENS + SPEED', color: '#60a5fa' },
-    { type: 'buggy', label: 'PALM BEACH BUGGY', tag: 'AGILE STUNT', color: '#22c55e' },
-    { type: 'gt_coupe', label: 'VICE GT COUPE', tag: 'BALANCED', color: '#a855f7' },
-    { type: 'armored_van', label: 'VAULT RAMMER VAN', tag: 'HEAVY TANK', color: '#f59e0b' },
+    { type: 'hypercar', label: 'APEX-X FERRARI GT', tag: 'SUPERCAR • SEE-THROUGH', color: '#ff1e7a' },
+    { type: 'muscle', label: 'MIAMI V8 COUPE', tag: 'DRIFT SPEC', color: '#00c8ff' },
+    { type: 'speedboat', label: 'RIVA NEON SPEEDBOAT', tag: 'LUXURY OCEAN BOAT', color: '#00f5ff' },
+    { type: 'helicopter', label: 'SKYHAWK HELICOPTER', tag: 'AERIAL FLIGHT', color: '#38bdf8' },
+    { type: 'interceptor', label: 'NCPD INTERCEPTOR', tag: 'SIRENS + PURSUIT', color: '#60a5fa' },
+    { type: 'buggy', label: 'PALM BEACH ROADSTER', tag: 'BEACH CRUISER', color: '#22c55e' },
+    { type: 'armored_van', label: 'VAULT RAMMER VAN', tag: 'HEAVY ARMOR', color: '#f59e0b' },
+  ];
+
+  const upgradeCards = [
+    { key: 'nitro' as const, name: 'Turbo Nitro Overdrive', desc: '+8% Top Speed & faster Nitro', lvl: hud.upgrades.nitroLevel, costs: [4000, 8000, 14000] },
+    { key: 'armor' as const, name: 'Carbon Chassis Armor', desc: '-18% damage + extra max HP', lvl: hud.upgrades.armorLevel, costs: [4000, 8000, 14000] },
+    { key: 'blaster' as const, name: 'Tactical Rifle Kit', desc: 'Faster fire rate & +12 damage', lvl: hud.upgrades.blasterLevel, costs: [3500, 7500, 13000] },
+    { key: 'hack' as const, name: 'Net-Hack Quantum Chip', desc: '-18% cooldown & wider EMP', lvl: hud.upgrades.hackLevel, costs: [4500, 9000, 15000] },
   ];
 
   return (
     <div
-      className="glass-panel animate-pop"
+      className="animate-pop"
       style={{
         position: 'fixed',
         right: 22,
-        bottom: 84,
-        width: 358,
-        maxHeight: 'calc(100vh - 130px)',
-        borderRadius: 26,
-        border: '2px solid rgba(0, 245, 255, 0.5)',
-        zIndex: 45,
+        bottom: 74,
+        width: 342,
+        height: 600,
+        maxHeight: 'calc(100vh - 104px)',
+        borderRadius: 42,
+        background: 'linear-gradient(165deg, #0b0f1e 0%, #16112d 55%, #0a1426 100%)',
+        border: '5px solid #2a3148',
+        boxShadow: '0 26px 70px rgba(0, 0, 0, 0.85), inset 0 0 0 1px rgba(255,255,255,0.18)',
+        zIndex: 48,
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        boxShadow: '0 22px 60px rgba(0, 0, 0, 0.78), 0 0 28px rgba(0, 245, 255, 0.25)',
       }}
     >
-      {/* Phone Top Status Bar */}
+      {/* Realistic Smartphone Top Status Bar + Dynamic Island */}
       <div
         style={{
-          padding: '12px 16px 10px',
-          background: 'rgba(4, 8, 22, 0.85)',
-          borderBottom: '1px solid rgba(255,255,255,0.1)',
+          padding: '10px 22px 8px',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
+          fontSize: 11,
+          fontWeight: 800,
+          color: '#f8fafc',
+          position: 'relative',
         }}
       >
-        <div>
-          <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.16em', color: '#00f5ff' }}>
-            VICE-OS // 5G NEON
-          </div>
-          <div style={{ fontSize: 13, fontWeight: 900, color: '#22c55e' }}>${hud.cash.toLocaleString()}</div>
+        <span>{timeStr}</span>
+        <div style={{ width: 84, height: 20, borderRadius: 99, background: '#03050a', border: '1px solid rgba(255,255,255,0.08)' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <Signal size={12} />
+          <Wifi size={12} />
+          <Battery size={14} color="#4ade80" />
         </div>
-        <button
-          onClick={onClose}
-          style={{
-            background: 'rgba(255,255,255,0.1)',
-            border: 'none',
-            borderRadius: 99,
-            width: 28,
-            height: 28,
-            display: 'grid',
-            placeItems: 'center',
-            color: '#fff',
-            cursor: 'pointer',
-          }}
-        >
-          <X size={15} />
-        </button>
       </div>
 
-      {/* App Content Body */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {tab === 'heist' && (
-          <>
-            <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.12em', color: '#facc15' }}>
-              MAIN STORY — $100K HEIST PROTOCOL
+      {/* App Header Bar when inside an app */}
+      {app !== 'home' && (
+        <div
+          style={{
+            padding: '8px 14px',
+            background: 'rgba(5, 8, 20, 0.72)',
+            borderBottom: '1px solid rgba(255,255,255,0.1)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
+          <button
+            onClick={() => setApp('home')}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#38bdf8',
+              fontSize: 12,
+              fontWeight: 800,
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 3,
+            }}
+          >
+            <ChevronLeft size={16} /> Home
+          </button>
+          <span style={{ fontSize: 12.5, fontWeight: 900, color: '#fff', letterSpacing: '0.04em' }}>
+            {app === 'messages' ? 'Nova' : apps.find((a) => a.id === app)?.label}
+          </span>
+          <button
+            onClick={onClose}
+            style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: 2 }}
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      {/* Phone Screen Body */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: app === 'messages' ? 0 : 14, display: 'flex', flexDirection: 'column' }}>
+        {/* === PHONE HOME SCREEN === */}
+        {app === 'home' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1 }}>
+            {/* Wallpaper Lock-Style Widget */}
+            <div
+              style={{
+                padding: '14px 16px',
+                borderRadius: 20,
+                background: 'linear-gradient(135deg, rgba(255, 42, 133, 0.25), rgba(0, 245, 255, 0.16))',
+                border: '1px solid rgba(255,255,255,0.16)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: '#00f5ff', letterSpacing: '0.14em' }}>NEON COAST</div>
+                  <div style={{ fontSize: 22, fontWeight: 950, color: '#22c55e', marginTop: 2 }}>${hud.cash.toLocaleString()}</div>
+                </div>
+                <button
+                  onClick={onClose}
+                  style={{ background: 'rgba(0,0,0,0.4)', border: 'none', borderRadius: 99, width: 28, height: 28, color: '#fff', display: 'grid', placeItems: 'center', cursor: 'pointer' }}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              <div style={{ fontSize: 11, color: '#e2e8f0', marginTop: 6 }}>
+                {hud.spotifyActive ? `♫ Spotify: ${hud.spotifyTitle}` : `♫ ${hud.radioLabel}`}
+              </div>
+            </div>
+
+            {/* App Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, padding: '0 4px' }}>
+              {apps.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => setApp(item.id)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: 5,
+                    cursor: 'pointer',
+                    position: 'relative',
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 54,
+                      height: 54,
+                      borderRadius: 15,
+                      background: item.bg,
+                      display: 'grid',
+                      placeItems: 'center',
+                      color: '#fff',
+                      boxShadow: '0 6px 16px rgba(0,0,0,0.45)',
+                    }}
+                  >
+                    {item.icon}
+                  </div>
+                  {item.badge && (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        top: -4,
+                        right: 2,
+                        background: '#ff2a55',
+                        color: '#fff',
+                        fontSize: 9,
+                        fontWeight: 900,
+                        padding: '1px 5px',
+                        borderRadius: 99,
+                      }}
+                    >
+                      {item.badge}
+                    </span>
+                  )}
+                  <span style={{ fontSize: 10.5, fontWeight: 700, color: '#e2e8f0' }}>{item.label}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Recent Nova DM Notification Preview Card (100% Real-Life Texting Look!) */}
+            <div
+              onClick={() => setApp('messages')}
+              style={{
+                marginTop: 'auto',
+                padding: '11px 13px',
+                borderRadius: 16,
+                background: 'rgba(255,255,255,0.08)',
+                border: '1px solid rgba(244, 114, 182, 0.35)',
+                cursor: 'pointer',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
+                <span style={{ fontSize: 12, fontWeight: 900, color: '#f472b6' }}>Nova • Active now</span>
+                <span style={{ fontSize: 10, color: '#94a3b8' }}>{hud.nova.distanceToPlayer}m away</span>
+              </div>
+              <div style={{ fontSize: 11.5, color: '#e2e8f0', lineHeight: 1.35 }}>
+                {hud.nova.latestSpeech.length > 82 ? hud.nova.latestSpeech.slice(0, 82) + '…' : hud.nova.latestSpeech}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* === REAL MESSAGES DM APP — NOVA (ZERO AI/API/MODEL CLUTTER!) === */}
+        {app === 'messages' && (
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            {/* Contact Sub-header */}
+            <div
+              style={{
+                padding: '8px 14px',
+                background: 'rgba(255,255,255,0.03)',
+                borderBottom: '1px solid rgba(255,255,255,0.08)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                <div
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 99,
+                    background: 'linear-gradient(135deg, #ec4899, #8b5cf6)',
+                    display: 'grid',
+                    placeItems: 'center',
+                    fontWeight: 950,
+                    fontSize: 15,
+                    color: '#fff',
+                  }}
+                >
+                  N
+                </div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 900, color: '#fff', display: 'flex', alignItems: 'center', gap: 5 }}>
+                    Nova <span style={{ width: 7, height: 7, borderRadius: 99, background: '#22c55e', display: 'inline-block' }} />
+                  </div>
+                  <div style={{ fontSize: 10, color: '#94a3b8' }}>
+                    {hud.nova.currentActivity} • {hud.nova.district}
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={onSummonNova}
+                style={{
+                  background: 'rgba(236, 72, 153, 0.2)',
+                  border: '1px solid rgba(236, 72, 153, 0.5)',
+                  color: '#fbcfe8',
+                  borderRadius: 99,
+                  padding: '4px 9px',
+                  fontSize: 9.5,
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                }}
+              >
+                Meet Here
+              </button>
+            </div>
+
+            {/* DM Message Bubbles */}
+            <div ref={chatScrollRef} style={{ flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {hud.nova.history
+                .filter((m) => m.role !== 'thought')
+                .map((m, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
+                      maxWidth: '82%',
+                      padding: '8px 12px',
+                      borderRadius: m.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                      background: m.role === 'user' ? 'linear-gradient(135deg, #0ea5e9, #2563eb)' : 'rgba(255,255,255,0.1)',
+                      color: '#fff',
+                      fontSize: 12,
+                      lineHeight: 1.38,
+                    }}
+                  >
+                    {m.text}
+                    {m.actionTag && (
+                      <div style={{ marginTop: 4, fontSize: 9.5, fontWeight: 800, color: '#f9a8d4' }}>
+                        ✓ {m.actionTag}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              {hud.nova.thinking && (
+                <div style={{ alignSelf: 'flex-start', padding: '7px 12px', borderRadius: 14, background: 'rgba(255,255,255,0.08)', fontSize: 11, color: '#cbd5e1', fontStyle: 'italic' }}>
+                  Nova is typing…
+                </div>
+              )}
+            </div>
+
+            {/* Quick Human Text Chips */}
+            <div style={{ padding: '6px 10px 4px', display: 'flex', gap: 5, flexWrap: 'wrap', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+              {[
+                'Come with me!',
+                'Café date? ☕',
+                'Dance for me! 💃',
+                'Hit the Mall 🍔',
+                'Wait here',
+              ].map((txt) => (
+                <button
+                  key={txt}
+                  onClick={() => sendDm(txt)}
+                  style={{
+                    background: 'rgba(255,255,255,0.08)',
+                    border: '1px solid rgba(255,255,255,0.14)',
+                    color: '#e2e8f0',
+                    borderRadius: 99,
+                    padding: '3px 8px',
+                    fontSize: 10,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {txt}
+                </button>
+              ))}
+            </div>
+
+            {/* Text Input Bar */}
+            <div style={{ padding: '8px 10px 12px', display: 'flex', gap: 6 }}>
+              <input
+                type="text"
+                value={dmInput}
+                onChange={(e) => setDmInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') sendDm();
+                }}
+                placeholder="iMessage Nova..."
+                style={{
+                  flex: 1,
+                  background: 'rgba(5, 8, 20, 0.85)',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  borderRadius: 99,
+                  padding: '8px 13px',
+                  color: '#fff',
+                  fontSize: 12,
+                  outline: 'none',
+                }}
+              />
+              <button
+                onClick={() => sendDm()}
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: 99,
+                  background: '#0ea5e9',
+                  border: 'none',
+                  color: '#fff',
+                  display: 'grid',
+                  placeItems: 'center',
+                  cursor: 'pointer',
+                }}
+              >
+                <Send size={14} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* === SPOTIFY MUSIC APP === */}
+        {app === 'spotify' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <SpotifyConnectPanel
+              activeEmbedUrl={spotifyEmbedUrl}
+              activeTitle={hud.spotifyTitle}
+              spotifyActive={hud.spotifyActive}
+              onSelectTrack={onSelectSpotify}
+              onToggleActive={onToggleSpotifyActive}
+              compact
+            />
+            <div style={{ fontSize: 10, fontWeight: 800, color: '#94a3b8', marginTop: 4 }}>OR SWITCH TO LOCAL FM RADIO:</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>
+              {(
+                [
+                  ['wave88', 'WAVE 88.5 FM'],
+                  ['palm101', 'PALM 101.2 FM'],
+                  ['pulse99', 'PULSE 99.9 FM'],
+                  ['off', 'RADIO OFF'],
+                ] as [RadioStationId, string][]
+              ).map(([id, lbl]) => (
+                <button
+                  key={id}
+                  onClick={() => {
+                    onToggleSpotifyActive(false);
+                    onSetRadio(id);
+                  }}
+                  style={{
+                    padding: '6px',
+                    borderRadius: 8,
+                    fontSize: 10,
+                    fontWeight: 800,
+                    background: hud.radioStation === id && !hud.spotifyActive ? 'rgba(255,42,133,0.25)' : 'rgba(255,255,255,0.06)',
+                    border: `1px solid ${hud.radioStation === id && !hud.spotifyActive ? '#ff2a85' : 'rgba(255,255,255,0.12)'}`,
+                    color: '#fff',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {lbl}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* === MISSIONS TO-DO LIST APP === */}
+        {app === 'missions' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 900, color: '#facc15', letterSpacing: '0.1em' }}>
+              HEIST TO-DO CHECKLIST ({hud.completedMissionIds.length}/4)
             </div>
             {CAMPAIGN_MISSIONS.map((m) => {
               const done = hud.completedMissionIds.includes(m.id);
@@ -161,56 +520,54 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
                 <div
                   key={m.id}
                   style={{
-                    padding: 11,
+                    padding: 10,
                     borderRadius: 12,
-                    background: active ? 'rgba(250, 204, 21, 0.14)' : 'rgba(255, 255, 255, 0.05)',
+                    background: active ? 'rgba(250, 204, 21, 0.14)' : 'rgba(255,255,255,0.05)',
                     border: `1px solid ${active ? '#facc15' : done ? 'rgba(34,197,94,0.45)' : 'rgba(255,255,255,0.12)'}`,
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 12, fontWeight: 900, color: done ? '#4ade80' : '#fff' }}>
-                      {done && <CheckCircle2 size={13} style={{ display: 'inline', verticalAlign: '-2px', marginRight: 4 }} />}
-                      #{m.number} {m.title}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, fontWeight: 900 }}>
+                    <span style={{ color: done ? '#4ade80' : '#fff', textDecoration: done ? 'line-through' : 'none' }}>
+                      {done && <CheckCircle2 size={12} style={{ display: 'inline', marginRight: 4 }} />}
+                      {m.title}
                     </span>
-                    <span style={{ fontSize: 11, fontWeight: 900, color: '#22c55e' }}>+${m.rewardCash.toLocaleString()}</span>
+                    <span style={{ color: '#22c55e' }}>${m.rewardCash.toLocaleString()}</span>
                   </div>
-                  <div style={{ fontSize: 11, color: '#cbd5e1', marginTop: 4, lineHeight: 1.35 }}>{m.shortDesc}</div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
-                    <span style={{ fontSize: 10, fontWeight: 800, color: '#00f5ff' }}>UNLOCK: {m.unlockLabel}</span>
+                  <div style={{ fontSize: 10.5, color: '#cbd5e1', marginTop: 3 }}>{m.shortDesc}</div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 7 }}>
                     <button
                       className={active ? 'btn-secondary' : 'btn-primary'}
                       onClick={() => {
                         onLaunchMission(m.id);
                         onClose();
                       }}
-                      style={{ padding: '4px 11px', borderRadius: 7, fontSize: 10 }}
+                      style={{ padding: '4px 10px', borderRadius: 7, fontSize: 10 }}
                     >
-                      {active ? 'RESTART' : done ? 'REPLAY' : 'LAUNCH'}
+                      {active ? 'RESTART' : done ? 'REPLAY' : 'START'}
                     </button>
                   </div>
                 </div>
               );
             })}
-
-            <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.12em', color: '#22ff88', marginTop: 4 }}>
-              <Flag size={12} style={{ display: 'inline', verticalAlign: '-2px', marginRight: 4 }} /> STREET RACES (SMART ROAD AI)
+            <div style={{ fontSize: 10.5, fontWeight: 900, color: '#22ff88', marginTop: 4 }}>
+              <Flag size={11} style={{ display: 'inline', marginRight: 4 }} /> STREET RACES
             </div>
             {STREET_RACES.map((r) => (
               <div
                 key={r.id}
                 style={{
-                  padding: '9px 11px',
+                  padding: '8px 10px',
                   borderRadius: 10,
-                  background: 'rgba(34, 255, 136, 0.08)',
-                  border: '1px solid rgba(34, 255, 136, 0.3)',
+                  background: 'rgba(34,255,136,0.08)',
+                  border: '1px solid rgba(34,255,136,0.28)',
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
                 }}
               >
                 <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: '#fff' }}>{r.name}</div>
-                  <div style={{ fontSize: 10, color: '#4ade80', fontWeight: 700 }}>PRIZE: ${r.reward.toLocaleString()}</div>
+                  <div style={{ fontSize: 11.5, fontWeight: 800 }}>{r.name}</div>
+                  <div style={{ fontSize: 10, color: '#4ade80' }}>${r.reward.toLocaleString()}</div>
                 </div>
                 <button
                   className="btn-secondary"
@@ -218,134 +575,108 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
                     onLaunchRace(r.id);
                     onClose();
                   }}
-                  style={{ padding: '5px 10px', borderRadius: 7, fontSize: 10 }}
+                  style={{ padding: '4px 9px', borderRadius: 7, fontSize: 10 }}
                 >
                   RACE
                 </button>
               </div>
             ))}
-          </>
+          </div>
         )}
 
-        {tab === 'hack' && (
-          <>
-            <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.12em', color: '#00f5ff' }}>
-              CITY INFRASTRUCTURE NET-HACK
+        {/* === BAG APP === */}
+        {app === 'bag' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: '#4ade80' }}>
+              HEALTH: {hud.playerHp} / {hud.playerMaxHp} • Tap food to eat & heal!
             </div>
-            {[
-              {
-                id: 'traffic' as const,
-                hotkey: '1',
-                title: 'TRAFFIC GRID CHAOS',
-                desc: 'Forces all city lights haywire — traffic surges through intersections to block chasing cops!',
-                cd: hud.hacks.trafficChaos,
-              },
-              {
-                id: 'emp' as const,
-                hotkey: '2',
-                title: 'PULSE EMP SHOCKWAVE',
-                desc: 'Blasts an electric dome around you, stalling all NCPD cars & damaging nearby Syndicate rides!',
-                cd: hud.hacks.empPulse,
-              },
-              {
-                id: 'spoof' as const,
-                hotkey: '3',
-                title: 'NCPD SCANNER SPOOF',
-                desc: 'Scrambles police dispatch transponders to instantly drop 1 Wanted Star.',
-                cd: hud.hacks.spoofScanner,
-              },
-            ].map((h) => {
-              const ready = h.cd <= 0 && (h.id !== 'spoof' || hud.wantedStars > 0);
-              return (
+            {hud.inventory.length === 0 ? (
+              <div style={{ fontSize: 12, color: '#94a3b8', textAlign: 'center', padding: 26 }}>
+                Bag is empty. Walk into Neon Coast Mall Food Court or Sunset Café to stock up!
+              </div>
+            ) : (
+              hud.inventory.map((e) => (
                 <div
-                  key={h.id}
+                  key={e.item.id}
                   style={{
-                    padding: 12,
-                    borderRadius: 12,
-                    background: 'rgba(0, 245, 255, 0.07)',
-                    border: `1px solid ${ready ? 'rgba(0,245,255,0.55)' : 'rgba(255,255,255,0.12)'}`,
+                    padding: '9px 11px',
+                    borderRadius: 11,
+                    background: 'rgba(255,255,255,0.06)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 12, fontWeight: 900, color: '#e0f7ff' }}>
-                      [{h.hotkey}] {h.title}
-                    </span>
-                    <span style={{ fontSize: 11, fontWeight: 800, color: ready ? '#22ff88' : '#94a3b8' }}>
-                      {h.cd > 0 ? `${Math.ceil(h.cd)}s` : 'READY'}
-                    </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 22 }}>{e.item.icon}</span>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 800 }}>
+                        {e.item.name} <span style={{ color: '#00f5ff' }}>x{e.qty}</span>
+                      </div>
+                      <div style={{ fontSize: 10, color: '#4ade80' }}>+{e.item.healHp} HP</div>
+                    </div>
                   </div>
-                  <div style={{ fontSize: 11, color: '#cbd5e1', margin: '5px 0 9px', lineHeight: 1.35 }}>{h.desc}</div>
+                  <button className="btn-primary" onClick={() => onUseInventoryItem(e.item.id)} style={{ padding: '5px 10px', borderRadius: 7, fontSize: 10 }}>
+                    USE
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* === WARDROBE / DRESS CHANGE APP === */}
+        {app === 'wardrobe' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 11, color: '#cbd5e1' }}>Swap outfits anytime or walk into VICE Drip Clothing Store on Ocean Drive!</div>
+            {OUTFITS.map((o) => {
+              const owned = hud.ownedOutfitIds.includes(o.id);
+              const equipped = hud.equippedOutfitId === o.id;
+              return (
+                <div
+                  key={o.id}
+                  style={{
+                    padding: '9px 11px',
+                    borderRadius: 11,
+                    background: equipped ? 'rgba(192,132,252,0.18)' : 'rgba(255,255,255,0.05)',
+                    borderLeft: `4px solid ${o.previewHex}`,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 8,
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 900 }}>{o.name}</div>
+                    <div style={{ fontSize: 10, color: '#94a3b8' }}>{owned ? 'Owned' : `$${o.price}`}</div>
+                  </div>
                   <button
-                    className={ready ? 'btn-primary' : 'btn-secondary'}
-                    disabled={!ready}
-                    onClick={() => onTriggerHack(h.id)}
-                    style={{ width: '100%', padding: '7px', borderRadius: 8, fontSize: 11, opacity: ready ? 1 : 0.45 }}
+                    className={equipped ? 'btn-secondary' : 'btn-primary'}
+                    onClick={() => onEquipOutfit(o.id)}
+                    style={{ padding: '5px 10px', borderRadius: 7, fontSize: 10 }}
                   >
-                    EXECUTE EXPLOIT
+                    {equipped ? 'WORN' : owned ? 'WEAR' : `BUY $${o.price}`}
                   </button>
                 </div>
               );
             })}
-          </>
+          </div>
         )}
 
-        {tab === 'shop' && (
-          <>
-            <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.12em', color: '#ff47a3' }}>
-              BLACK MARKET PERMANENT UPGRADES
-            </div>
-            {upgradeCards.map((u) => {
-              const maxed = u.lvl >= 3;
-              const cost = maxed ? 0 : u.costs[u.lvl];
-              const canAfford = !maxed && hud.cash >= cost;
-              return (
-                <div
-                  key={u.key}
-                  style={{
-                    padding: 11,
-                    borderRadius: 12,
-                    background: 'rgba(255,255,255,0.05)',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 12, fontWeight: 900 }}>{u.name}</span>
-                    <span style={{ fontSize: 11, fontWeight: 800, color: '#00f5ff' }}>LV {u.lvl}/3</span>
-                  </div>
-                  <div style={{ fontSize: 11, color: '#cbd5e1', margin: '4px 0 8px' }}>{u.desc}</div>
-                  <button
-                    className={canAfford ? 'btn-primary' : 'btn-secondary'}
-                    disabled={!canAfford}
-                    onClick={() => onBuyUpgrade(u.key)}
-                    style={{ width: '100%', padding: '6px', borderRadius: 8, fontSize: 11, opacity: canAfford || maxed ? 1 : 0.45 }}
-                  >
-                    {maxed ? 'MAXED OUT' : `UPGRADE — $${cost.toLocaleString()}`}
-                  </button>
-                </div>
-              );
-            })}
-          </>
-        )}
-
-        {tab === 'garage' && (
-          <>
+        {/* === FLEET / GARAGE APP === */}
+        {app === 'fleet' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.12em', color: '#00f5ff' }}>
-                LAND, SEA & AIR FLEET DROP
-              </span>
-              <button
-                className="btn-secondary"
-                onClick={onRepaintVehicle}
-                style={{ padding: '4px 9px', borderRadius: 7, fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 4 }}
-              >
-                <Paintbrush size={11} /> REPAINT
+              <span style={{ fontSize: 10.5, fontWeight: 900, color: '#00f5ff' }}>LAND, SEA & AIR DELIVERY</span>
+              <button className="btn-secondary" onClick={onRepaintVehicle} style={{ padding: '4px 8px', borderRadius: 7, fontSize: 10 }}>
+                <Paintbrush size={11} style={{ display: 'inline' }} /> REPAINT
               </button>
             </div>
             {garageCars.map((c) => (
               <div
                 key={c.type}
                 style={{
-                  padding: '9px 11px',
+                  padding: '8px 10px',
                   borderRadius: 10,
                   background: 'rgba(255,255,255,0.05)',
                   borderLeft: `4px solid ${c.color}`,
@@ -355,8 +686,8 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
                 }}
               >
                 <div>
-                  <div style={{ fontSize: 12, fontWeight: 900 }}>{c.label}</div>
-                  <div style={{ fontSize: 10, color: '#94a3b8', fontWeight: 700 }}>{c.tag}</div>
+                  <div style={{ fontSize: 11.5, fontWeight: 900 }}>{c.label}</div>
+                  <div style={{ fontSize: 9.5, color: '#94a3b8' }}>{c.tag}</div>
                 </div>
                 <button
                   className="btn-secondary"
@@ -364,150 +695,86 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
                     onSummonVehicle(c.type);
                     onClose();
                   }}
-                  style={{ padding: '5px 10px', borderRadius: 7, fontSize: 10 }}
+                  style={{ padding: '5px 9px', borderRadius: 7, fontSize: 10 }}
                 >
                   SUMMON
                 </button>
               </div>
             ))}
-          </>
+          </div>
         )}
 
-        {tab === 'spotify' && (
-          <>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button
-                className={musicSubTab === 'spotify' ? 'btn-primary' : 'btn-secondary'}
-                onClick={() => setMusicSubTab('spotify')}
-                style={{
-                  flex: 1,
-                  padding: '6px',
-                  borderRadius: 8,
-                  fontSize: 10,
-                  background: musicSubTab === 'spotify' ? 'linear-gradient(135deg, #1db954, #15803d)' : undefined,
-                  borderColor: '#1db954',
-                }}
-              >
-                SPOTIFY CONNECT
-              </button>
-              <button
-                className={musicSubTab === 'fm' ? 'btn-primary' : 'btn-secondary'}
-                onClick={() => setMusicSubTab('fm')}
-                style={{ flex: 1, padding: '6px', borderRadius: 8, fontSize: 10 }}
-              >
-                FM SYNTH RADIO
-              </button>
-            </div>
-
-            {musicSubTab === 'spotify' ? (
-              <SpotifyConnectPanel
-                activeEmbedUrl={spotifyEmbedUrl}
-                activeTitle={hud.spotifyTitle}
-                spotifyActive={hud.spotifyActive}
-                onSelectTrack={onSelectSpotify}
-                onToggleActive={onToggleSpotifyActive}
-                compact
-              />
-            ) : (
-              <>
-                {(
-                  [
-                    ['wave88', 'WAVE 88.5 FM', '80s Vice City Synthwave Outrun'],
-                    ['palm101', 'PALM 101.2 FM', 'Miami Beach Sunset Lo-Fi'],
-                    ['pulse99', 'PULSE 99.9 FM', 'High-Energy Chase Electro'],
-                    ['off', 'RADIO OFF', 'Engine & Ambient SFX Only'],
-                  ] as [RadioStationId, string, string][]
-                ).map(([id, title, sub]) => {
-                  const active = hud.radioStation === id && !hud.spotifyActive;
-                  return (
-                    <button
-                      key={id}
-                      onClick={() => {
-                        onToggleSpotifyActive(false);
-                        onSetRadio(id);
-                      }}
-                      style={{
-                        textAlign: 'left',
-                        padding: '9px 12px',
-                        borderRadius: 10,
-                        background: active ? 'rgba(255, 42, 133, 0.22)' : 'rgba(255,255,255,0.05)',
-                        border: `1px solid ${active ? '#ff2a85' : 'rgba(255,255,255,0.12)'}`,
-                        color: '#fff',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <div style={{ fontSize: 12, fontWeight: 900, color: active ? '#ff8dc7' : '#fff' }}>{title}</div>
-                      <div style={{ fontSize: 10, color: '#cbd5e1' }}>{sub}</div>
-                    </button>
-                  );
-                })}
-
-                <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 7 }}>
-                  {[
-                    { label: 'MASTER', val: hud.audioMaster, set: (v: number) => onSetVolumes(v, hud.audioMusic, hud.audioSfx) },
-                    { label: 'RADIO MUSIC', val: hud.audioMusic, set: (v: number) => onSetVolumes(hud.audioMaster, v, hud.audioSfx) },
-                    { label: 'SFX & ENGINE', val: hud.audioSfx, set: (v: number) => onSetVolumes(hud.audioMaster, hud.audioMusic, v) },
-                  ].map((s) => (
-                    <label key={s.label} style={{ fontSize: 10, fontWeight: 800, color: '#cbd5e1', display: 'flex', flexDirection: 'column', gap: 3 }}>
-                      <span>{s.label}: {Math.round(s.val * 100)}%</span>
-                      <input
-                        type="range"
-                        min={0}
-                        max={1}
-                        step={0.05}
-                        value={s.val}
-                        onChange={(e) => s.set(parseFloat(e.target.value))}
-                        style={{ accentColor: '#00f5ff' }}
-                      />
-                    </label>
-                  ))}
+        {/* === NET-HACK APP === */}
+        {app === 'hack' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+            {[
+              { id: 'traffic' as const, title: 'Traffic Grid Chaos', desc: 'Scrambles all traffic lights to block cops.', cd: hud.hacks.trafficChaos },
+              { id: 'emp' as const, title: 'Pulse EMP Shockwave', desc: 'Stalls all nearby police & Syndicate vehicles.', cd: hud.hacks.empPulse },
+              { id: 'spoof' as const, title: 'NCPD Scanner Spoof', desc: 'Drops 1 Wanted Star remotely.', cd: hud.hacks.spoofScanner },
+            ].map((h) => {
+              const ready = h.cd <= 0 && (h.id !== 'spoof' || hud.wantedStars > 0);
+              return (
+                <div key={h.id} style={{ padding: 11, borderRadius: 11, background: 'rgba(0,245,255,0.07)', border: '1px solid rgba(0,245,255,0.3)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 900 }}>
+                    <span>{h.title}</span>
+                    <span style={{ color: ready ? '#22ff88' : '#94a3b8' }}>{h.cd > 0 ? `${Math.ceil(h.cd)}s` : 'READY'}</span>
+                  </div>
+                  <div style={{ fontSize: 10.5, color: '#cbd5e1', margin: '4px 0 8px' }}>{h.desc}</div>
+                  <button
+                    className={ready ? 'btn-primary' : 'btn-secondary'}
+                    disabled={!ready}
+                    onClick={() => onTriggerHack(h.id)}
+                    style={{ width: '100%', padding: '6px', borderRadius: 7, fontSize: 10, opacity: ready ? 1 : 0.45 }}
+                  >
+                    RUN EXPLOIT
+                  </button>
                 </div>
-              </>
-            )}
-          </>
+              );
+            })}
+          </div>
+        )}
+
+        {/* === BLACK MARKET UPGRADES APP === */}
+        {app === 'shop' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {upgradeCards.map((u) => {
+              const maxed = u.lvl >= 3;
+              const cost = maxed ? 0 : u.costs[u.lvl];
+              const canAfford = !maxed && hud.cash >= cost;
+              return (
+                <div key={u.key} style={{ padding: 10, borderRadius: 11, background: 'rgba(255,255,255,0.05)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 900 }}>
+                    <span>{u.name}</span>
+                    <span style={{ color: '#00f5ff' }}>LV {u.lvl}/3</span>
+                  </div>
+                  <div style={{ fontSize: 10.5, color: '#cbd5e1', margin: '3px 0 7px' }}>{u.desc}</div>
+                  <button
+                    className={canAfford ? 'btn-primary' : 'btn-secondary'}
+                    disabled={!canAfford}
+                    onClick={() => onBuyUpgrade(u.key)}
+                    style={{ width: '100%', padding: '5px', borderRadius: 7, fontSize: 10, opacity: canAfford || maxed ? 1 : 0.45 }}
+                  >
+                    {maxed ? 'MAXED' : `UPGRADE $${cost.toLocaleString()}`}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
 
-      {/* Bottom Dock Tabs */}
+      {/* Bottom Realistic Phone Home Gesture Bar */}
       <div
+        onClick={() => setApp('home')}
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(5, 1fr)',
-          background: 'rgba(5, 8, 22, 0.92)',
-          borderTop: '1px solid rgba(255,255,255,0.12)',
-          padding: '6px 4px',
+          padding: '9px 0 11px',
+          display: 'flex',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          background: 'rgba(4, 6, 16, 0.7)',
         }}
       >
-        {(
-          [
-            ['heist', 'OPS', <Target size={16} />],
-            ['hack', 'HACK', <Cpu size={16} />],
-            ['shop', 'SHOP', <ShoppingBag size={16} />],
-            ['garage', 'FLEET', <Car size={16} />],
-            ['spotify', 'SPOTIFY', <Music2 size={16} color={tab === 'spotify' ? '#1db954' : undefined} />],
-          ] as [AppTab, string, React.ReactNode][]
-        ).map(([id, lbl, icon]) => (
-          <button
-            key={id}
-            onClick={() => setTab(id)}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: tab === id ? (id === 'spotify' ? '#1db954' : '#00f5ff') : '#94a3b8',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: 3,
-              fontSize: 9,
-              fontWeight: 800,
-              cursor: 'pointer',
-              padding: '4px 0',
-            }}
-          >
-            {icon}
-            {lbl}
-          </button>
-        ))}
+        <div style={{ width: 110, height: 4, borderRadius: 99, background: 'rgba(255,255,255,0.4)' }} />
       </div>
     </div>
   );

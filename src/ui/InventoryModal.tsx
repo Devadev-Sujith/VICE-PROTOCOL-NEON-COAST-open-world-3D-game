@@ -1,6 +1,7 @@
 import React from 'react';
-import { Backpack, Heart, ShoppingBag, Users, Utensils, X, Zap } from 'lucide-react';
+import { Backpack, Heart, Shirt, ShoppingBag, Users, Utensils, X, Zap } from 'lucide-react';
 import type { HudSnapshot, ShopCatalogItem } from '../core/types';
+import { OUTFITS } from '../entities/PlayerController';
 import { SHOP_CATALOG } from '../world/InteriorBuilder';
 
 interface InventoryModalProps {
@@ -10,6 +11,7 @@ interface InventoryModalProps {
   onClose: () => void;
   onBuyItem: (itemId: string, eatNow: boolean) => void;
   onUseItem: (itemId: string) => void;
+  onBuyOrEquipOutfit?: (outfitId: string) => void;
 }
 
 const VENUE_HEADERS: Record<ShopCatalogItem['venue'], { title: string; subtitle: string; accent: string }> = {
@@ -28,6 +30,11 @@ const VENUE_HEADERS: Record<ShopCatalogItem['venue'], { title: string; subtitle:
     subtitle: 'Stock up on Field Medkits, Portable Nitro Cells & luxury Neon Coast gear.',
     accent: '#00f5ff',
   },
+  clothes: {
+    title: 'VICE DRIP CLOTHING STORE',
+    subtitle: 'Try on & buy designer Vice City suits, streetwear & resort outfits!',
+    accent: '#c084fc',
+  },
   vending: {
     title: 'NEON STREET VENDING',
     subtitle: 'Ice-cold street drinks on the go.',
@@ -42,6 +49,7 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
   onClose,
   onBuyItem,
   onUseItem,
+  onBuyOrEquipOutfit,
 }) => {
   const venueInfo = venue ? VENUE_HEADERS[venue] : null;
   const shopItems = venue ? SHOP_CATALOG.filter((i) => i.venue === venue) : [];
@@ -154,7 +162,45 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
 
         {/* Body */}
         <div style={{ padding: 18, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {mode === 'shop' ? (
+          {mode === 'shop' && venue === 'clothes' ? (
+            OUTFITS.map((outfit) => {
+              const owned = hud.ownedOutfitIds.includes(outfit.id);
+              const equipped = hud.equippedOutfitId === outfit.id;
+              const canAfford = owned || hud.cash >= outfit.price;
+              return (
+                <div
+                  key={outfit.id}
+                  style={{
+                    padding: '12px 14px',
+                    borderRadius: 12,
+                    background: equipped ? 'rgba(192, 132, 252, 0.16)' : 'rgba(255,255,255,0.05)',
+                    border: `1px solid ${equipped ? '#c084fc' : 'rgba(255,255,255,0.12)'}`,
+                    borderLeft: `5px solid ${outfit.previewHex}`,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 12,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <Shirt size={24} color={outfit.previewHex} />
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 900, color: '#fff' }}>{outfit.name}</div>
+                      <div style={{ fontSize: 11, color: '#cbd5e1', marginTop: 2 }}>{outfit.description}</div>
+                    </div>
+                  </div>
+                  <button
+                    className={equipped ? 'btn-secondary' : 'btn-primary'}
+                    disabled={!canAfford}
+                    onClick={() => onBuyOrEquipOutfit?.(outfit.id)}
+                    style={{ padding: '7px 14px', borderRadius: 9, fontSize: 11, whiteSpace: 'nowrap', opacity: canAfford ? 1 : 0.45 }}
+                  >
+                    {equipped ? 'EQUIPPED' : owned ? 'WEAR NOW' : `BUY $${outfit.price}`}
+                  </button>
+                </div>
+              );
+            })
+          ) : mode === 'shop' ? (
             shopItems.map((item) => {
               const canAfford = hud.cash >= item.price;
               return (

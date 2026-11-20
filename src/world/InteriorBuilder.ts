@@ -157,11 +157,12 @@ export interface InteriorInteractable {
   radius: number;
 }
 
-// Each interior is built in isolated subterranean 3D coordinates (y = -120) so transitions are instantaneous!
+// Each interior is built far below ocean (y = -180) and ALWAYS visible so shaders pre-compile at startup -> 0ms INSTANT entry!
 const INTERIOR_ORIGINS: Record<InteriorId, { x: number; y: number; z: number; halfW: number; halfD: number }> = {
-  mall: { x: 0, y: -120, z: 0, halfW: 22, halfD: 24 },
-  cafe: { x: 120, y: -120, z: 0, halfW: 11, halfD: 10 },
-  office: { x: -120, y: -120, z: 0, halfW: 14, halfD: 13 },
+  mall: { x: 0, y: -180, z: 0, halfW: 22, halfD: 24 },
+  cafe: { x: 120, y: -180, z: 0, halfW: 11, halfD: 10 },
+  office: { x: -120, y: -180, z: 0, halfW: 14, halfD: 13 },
+  clothes: { x: 0, y: -180, z: -120, halfW: 12, halfD: 11 },
 };
 
 export class InteriorBuilder {
@@ -170,27 +171,36 @@ export class InteriorBuilder {
   private mallEscalatorStepsDown: THREE.Mesh[] = [];
   private queueCustomers: QueueCustomer[] = [];
   private queueAdvanceTimer = 6.5;
+  private activeRoom: InteriorId | null = null;
   private interactablesByRoom: Record<InteriorId, InteriorInteractable[]> = {
     mall: [],
     cafe: [],
     office: [],
+    clothes: [],
   };
 
   constructor(private scene: THREE.Scene) {
-    this.root.visible = false;
+    // Keep root visible from frame 1 so WebGL compiles all interior materials immediately (ZERO black screen hitch!)
+    this.root.visible = true;
     this.scene.add(this.root);
     this.buildShoppingMall();
     this.buildSunsetCafe();
     this.buildCorporateOffice();
+    this.buildClothingStore();
   }
 
   public setActiveInterior(id: InteriorId | null): void {
-    this.root.visible = id !== null;
+    this.activeRoom = id;
+  }
+
+  public isAtExitDoor(id: InteriorId, px: number, pz: number): boolean {
+    const o = INTERIOR_ORIGINS[id];
+    return Math.abs(px - o.x) < 2.6 && pz > o.z + o.halfD - 1.9;
   }
 
   public getSpawnPoint(id: InteriorId): { x: number; y: number; z: number; heading: number } {
     const o = INTERIOR_ORIGINS[id];
-    return { x: o.x, y: o.y, z: o.z + o.halfD - 3.2, heading: Math.PI };
+    return { x: o.x, y: o.y, z: o.z + o.halfD - 4.2, heading: Math.PI };
   }
 
   public getGroundHeight(id: InteriorId, x: number, z: number): number {
@@ -297,12 +307,15 @@ export class InteriorBuilder {
     );
     exitDoor.position.set(0, 1.8, d * 0.5 - 0.35);
 
-    const interiorLight = new THREE.PointLight(0xfff1e6, 2.2, 65, 1.1);
-    interiorLight.position.set(0, h - 1.5, 0);
-    const fillLight = new THREE.PointLight(accentHex, 1.2, 50, 1.2);
-    fillLight.position.set(0, h * 0.6, d * 0.25);
+    // Bright non-decaying interior architectural lighting (Three.js r170 physically-correct decay=0!)
+    const interiorLight = new THREE.PointLight(0xfff6eb, 2.8, 90, 0);
+    interiorLight.position.set(0, h - 1.2, 0);
+    const fillLight = new THREE.PointLight(accentHex, 1.35, 70, 0);
+    fillLight.position.set(0, h * 0.65, d * 0.28);
+    const counterLight = new THREE.PointLight(0xffedd5, 1.4, 55, 0);
+    counterLight.position.set(0, h * 0.6, -d * 0.28);
 
-    g.add(floor, ceil, backWall, frontWall, leftWall, rightWall, strip1, strip2, exitDoor, interiorLight, fillLight);
+    g.add(floor, ceil, backWall, frontWall, leftWall, rightWall, strip1, strip2, exitDoor, interiorLight, fillLight, counterLight);
     this.root.add(g);
     return g;
   }
@@ -603,8 +616,83 @@ export class InteriorBuilder {
     ];
   }
 
+  private buildClothingStore(): void {
+    const o = INTERIOR_ORIGINS.clothes;
+    const g = this.buildRoomShell(o.x, o.y, o.z, o.halfW * 2, 6.8, o.halfD * 2, 0x1a152b, 0x2a1f42, 0xc084fc);
+
+    const rackMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.85, roughness: 0.2 });
+    const counterMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.35 });
+
+    // Stylish Outfit Display Mannequins along back podium!
+    const podium = new THREE.Mesh(new THREE.BoxGeometry(14, 0.55, 2.8), counterMat);
+    podium.position.set(0, 0.28, -7.2);
+    g.add(podium);
+
+    const mannequinColors = [
+      { jacket: 0xf1f5f9, shirt: 0x00e5ff, pants: 0xe2e8f0 },
+      { jacket: 0xf97316, shirt: 0xfacc15, pants: 0x18181b },
+      { jacket: 0x991b1b, shirt: 0x111827, pants: 0x18181b },
+    ];
+    mannequinColors.forEach((mc, idx) => {
+      const m = buildRoundedHumanMesh({
+        jacketColor: mc.jacket,
+        shirtColor: mc.shirt,
+        pantsColor: mc.pants,
+        skinColor: 0xe2e8f0,
+        hairColor: 0x334155,
+        hasShades: true,
+      });
+      m.group.position.set(-4.5 + idx * 4.5, 0.55, -7.2);
+      g.add(m.group);
+    });
+
+    // Clothing Racks on East & West Walls
+    for (const sx of [-8.2, 8.2]) {
+      const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 8.5, 8), rackMat);
+      bar.rotation.x = Math.PI / 2;
+      bar.position.set(sx, 1.85, 0);
+      g.add(bar);
+      for (let h = -3.2; h <= 3.2; h += 1.2) {
+        const garment = new THREE.Mesh(
+          new THREE.BoxGeometry(0.45, 1.05, 0.2),
+          new THREE.MeshStandardMaterial({
+            color: [0xff2a85, 0x00f5ff, 0xfacc15, 0x14b8a6, 0xa855f7][Math.abs(Math.round(h)) % 5],
+            roughness: 0.6,
+          })
+        );
+        garment.position.set(sx, 1.3, h);
+        g.add(garment);
+      }
+    }
+
+    // Stylist Clerk behind counter
+    const clerk = buildRoundedHumanMesh({
+      jacketColor: 0xc084fc,
+      shirtColor: 0xffffff,
+      pantsColor: 0x111827,
+      skinColor: 0xd8a47f,
+      hairColor: 0x18181b,
+      longHair: true,
+    });
+    clerk.group.position.set(0, 0, -3.5);
+    g.add(clerk.group);
+
+    this.interactablesByRoom.clothes = [
+      {
+        id: 'clothes_shop',
+        label: '[E] BROWSE & TRY ON OUTFITS (VICE DRIP)',
+        kind: 'shop',
+        venue: 'clothes',
+        x: o.x,
+        y: o.y,
+        z: o.z - 2.4,
+        radius: 5.0,
+      },
+    ];
+  }
+
   public update(dt: number, elapsed: number): void {
-    if (!this.root.visible) return;
+    if (!this.activeRoom) return;
 
     // 1. Smoothly animate Moving Mall Escalators!
     const speed = 0.22;

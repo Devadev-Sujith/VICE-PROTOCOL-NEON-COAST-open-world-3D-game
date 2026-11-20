@@ -25,7 +25,35 @@ export type RadioStationId = 'wave88' | 'palm101' | 'pulse99' | 'off';
 
 export type GameMode = 'title' | 'playing' | 'paused' | 'wasted' | 'busted' | 'victory';
 
-export type InteriorId = 'mall' | 'cafe' | 'office';
+export type InteriorId = 'mall' | 'cafe' | 'office' | 'clothes';
+
+export type WeaponId = 'fists' | 'pistol' | 'ak47' | 'sniper';
+
+export type WeatherMode = 'clear' | 'rain';
+
+export interface OutfitDef {
+  id: string;
+  name: string;
+  price: number;
+  jacketColor: number;
+  shirtColor: number;
+  pantsColor: number;
+  shoeColor: number;
+  hasShades: boolean;
+  previewHex: string;
+  description: string;
+}
+
+export interface LandmarkDef {
+  id: string;
+  name: string;
+  category: 'building' | 'service' | 'transport' | 'landmark' | 'race';
+  x: number;
+  z: number;
+  color: string;
+  description: string;
+  canInviteNova?: boolean;
+}
 
 export interface Vec2 {
   x: number;
@@ -169,8 +197,12 @@ export interface VehicleEntity {
   // Ownership / Role
   driver: 'none' | 'player' | 'traffic' | 'police' | 'enemy' | 'racer';
   colorHex: number;
+  /** Visual roll & pitch spring state */
   visualRoll: number;
   visualPitch: number;
+  glbLoaded?: boolean;
+  glbRoot?: THREE.Group;
+  fallbackBody?: THREE.Group;
   aiRoadAxis?: 'x' | 'z';
   aiRoadCoord?: number;
   aiDir?: 1 | -1;
@@ -220,7 +252,7 @@ export interface ShopCatalogItem {
   id: string;
   name: string;
   category: 'food' | 'drink' | 'gear' | 'medical';
-  venue: 'food_court' | 'cafe' | 'mall_shop' | 'vending';
+  venue: 'food_court' | 'cafe' | 'mall_shop' | 'vending' | 'clothes';
   price: number;
   healHp: number;
   nitroBoost?: number;
@@ -367,18 +399,25 @@ export interface HudSnapshot {
   interactPrompt: string | null;
   interactKind: 'vehicle' | 'interior_enter' | 'interior_exit' | 'shop' | 'npc' | 'nova' | 'vending' | null;
 
-  // Weapon / AK-47 Scope state
+  // Weapon / Combat state
+  weapon: WeaponId;
+  weaponLabel: string;
   isAiming: boolean;
   ammoInMag: number;
   magSize: number;
   reloading: boolean;
   scopeRangeMeters: number | null;
+  headshotToastTtl: number;
 
-  // Interior & Inventory
+  // Interior, Wardrobe & Inventory
   currentInterior: InteriorId | null;
   currentInteriorName: string | null;
   foodQueueLength: number;
   inventory: InventoryEntry[];
+  ownedOutfitIds: string[];
+  equippedOutfitId: string;
+  weather: WeatherMode;
+  pointerLocked: boolean;
 
   // Wanted
   wantedStars: number;

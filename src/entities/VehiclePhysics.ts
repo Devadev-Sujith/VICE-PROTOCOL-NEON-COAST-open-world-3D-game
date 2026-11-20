@@ -160,6 +160,11 @@ export class VehiclePhysics {
     if (v.cockpit) {
       v.cockpit.steeringWheel.rotation.z = -v.steerAngle * 2.4;
     }
+    // Spin boat propellers proportionally to thrust!
+    const propSpin = (6 + Math.abs(fwdSpeed) * 1.4) * dt;
+    for (const prop of v.wheels) {
+      prop.rotation.z += propSpin;
+    }
     for (const flame of v.nitroFlames) {
       flame.visible = usingNitro;
     }
@@ -465,8 +470,8 @@ export class VehiclePhysics {
       }
     }
 
-    // Resolve Buildings AND Solid Tree Trunk Collisions!
-    const colRadius = v.stats.width * 0.58;
+    // Resolve Buildings AND Solid Tree Trunk Collisions with TIGHT realistic fender radius!
+    const colRadius = v.stats.width * 0.44;
     const col = this.grid.resolveCircleCollision(nextX, nextZ, colRadius, v.y);
     v.x = col.x;
     v.z = col.z;
@@ -673,7 +678,8 @@ export class VehiclePhysics {
 
     const wheelSpin = (v.speed / 0.41) * dt;
     for (const wheel of v.wheels) {
-      wheel.rotation.x += wheelSpin;
+      // Ferrari GLB wheels rotate around X cleanly too!
+      wheel.rotation.x += v.glbLoaded ? -wheelSpin : wheelSpin;
     }
 
     const braking = input.throttle < -0.1 || input.handbrake;

@@ -670,10 +670,10 @@ export class CityBuilder {
       }
 
       this.grid.addCollider({
-        minX: cx - w * 0.5,
-        maxX: cx + w * 0.5,
-        minZ: cz - d * 0.5,
-        maxZ: cz + d * 0.5,
+        minX: cx - w * 0.5 + 0.25,
+        maxX: cx + w * 0.5 - 0.25,
+        minZ: cz - d * 0.5 + 0.25,
+        maxZ: cz + d * 0.5 - 0.25,
         height: h + 10,
       });
     };
@@ -1130,7 +1130,21 @@ export class CityBuilder {
       this.worldGroup.add(g);
     }
 
-    // 2. Glowing Helipads (Ocean Drive & Starlight Plaza)
+    // 2. Walkable Wooden Marina Boarding Jetties leading right to both Speedboats!
+    const jettyMat = new THREE.MeshStandardMaterial({ map: this.textures.pierWood, roughness: 0.85 });
+    for (const jz of [22, 118]) {
+      const jetty = new THREE.Mesh(new THREE.BoxGeometry(16, 0.4, 5.2), jettyMat);
+      jetty.position.set(240, 0.15, jz);
+      jetty.receiveShadow = true;
+      const bollard = new THREE.Mesh(
+        new THREE.SphereGeometry(0.32, 8, 8),
+        new THREE.MeshBasicMaterial({ color: 0x00f5ff })
+      );
+      bollard.position.set(247.5, 0.75, jz - 2.1);
+      this.worldGroup.add(jetty, bollard);
+    }
+
+    // 3. Glowing Helipads (Ocean Drive & Starlight Plaza)
     const padMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7 });
     const hGlow = new THREE.MeshBasicMaterial({ color: 0xfacc15, side: THREE.DoubleSide });
     for (const hp of HELIPAD_POSITIONS) {

@@ -1,14 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { GameEngine } from './core/GameEngine';
 import type { HudSnapshot, ShopCatalogItem } from './core/types';
-import { DemoToolbar } from './ui/DemoToolbar';
 import { FullMapModal } from './ui/FullMapModal';
 import { HUD } from './ui/HUD';
 import { InventoryModal } from './ui/InventoryModal';
 import { Minimap } from './ui/Minimap';
 import { Overlays } from './ui/Overlays';
-import { SentientChatModal } from './ui/SentientChatModal';
-import { Smartphone } from './ui/Smartphone';
+import { SettingsMenuModal } from './ui/SettingsMenuModal';
+import { type PhoneAppId, Smartphone } from './ui/Smartphone';
 import { SPOTIFY_PRESETS, SpotifyConnectPanel } from './ui/SpotifyWidget';
 import { TitleScreen } from './ui/TitleScreen';
 
@@ -18,14 +17,13 @@ export function App() {
   const [hud, setHud] = useState<HudSnapshot | null>(null);
 
   const [phoneOpen, setPhoneOpen] = useState(false);
+  const [phoneInitialApp, setPhoneInitialApp] = useState<PhoneAppId>('home');
   const [mapOpen, setMapOpen] = useState(false);
-  const [demoOpen, setDemoOpen] = useState(false);
-  const [spotifyDashOpen, setSpotifyDashOpen] = useState(false);
-  const [bagOpen, setBagOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [carSpotifyOpen, setCarSpotifyOpen] = useState(false);
   const [shopVenue, setShopVenue] = useState<ShopCatalogItem['venue'] | null>(null);
-  const [novaOpen, setNovaOpen] = useState(false);
 
-  // Shared Spotify Connect state (synced between Car Infotainment Dashboard & Phone!)
+  // Shared Spotify Connect state (synced between In-Car Music Player & Phone Spotify App!)
   const [spotifyEmbedUrl, setSpotifyEmbedUrl] = useState(SPOTIFY_PRESETS[0].embedUrl);
 
   useEffect(() => {
@@ -36,16 +34,17 @@ export function App() {
       onOpenShopVenue: (venue) => {
         setPhoneOpen(false);
         setMapOpen(false);
-        setBagOpen(false);
-        setNovaOpen(false);
+        setSettingsOpen(false);
+        setCarSpotifyOpen(false);
         setShopVenue(venue);
       },
-      onOpenNovaChat: () => {
-        setPhoneOpen(false);
+      onOpenPhoneMessages: () => {
         setMapOpen(false);
-        setBagOpen(false);
+        setSettingsOpen(false);
+        setCarSpotifyOpen(false);
         setShopVenue(null);
-        setNovaOpen(true);
+        setPhoneInitialApp('messages');
+        setPhoneOpen(true);
       },
     });
     engineRef.current = engine;
@@ -55,7 +54,7 @@ export function App() {
     };
   }, []);
 
-  // Global UI hotkeys: Tab=Phone, M=Map, P=Director, B=Bag, N=Nova Sentient AI, K=Car Spotify, Esc=Close
+  // Global Hotkeys: Tab=Phone, M=Complex City Map, K=Car Music Player (inside vehicle), Esc=Settings/Close
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
@@ -67,55 +66,52 @@ export function App() {
       if (e.code === 'Tab') {
         e.preventDefault();
         setMapOpen(false);
-        setBagOpen(false);
+        setSettingsOpen(false);
         setShopVenue(null);
-        setNovaOpen(false);
-        setSpotifyDashOpen(false);
+        setCarSpotifyOpen(false);
+        setPhoneInitialApp('home');
         setPhoneOpen((v) => !v);
       } else if (e.code === 'KeyM') {
         setPhoneOpen(false);
-        setBagOpen(false);
+        setSettingsOpen(false);
         setShopVenue(null);
-        setNovaOpen(false);
+        setCarSpotifyOpen(false);
         setMapOpen((v) => !v);
-      } else if (e.code === 'KeyB') {
+      } else if (e.code === 'KeyK' && eng.playerVehicle) {
         setPhoneOpen(false);
         setMapOpen(false);
-        setShopVenue(null);
-        setNovaOpen(false);
-        setBagOpen((v) => !v);
-      } else if (e.code === 'KeyN') {
-        setPhoneOpen(false);
-        setMapOpen(false);
-        setBagOpen(false);
-        setShopVenue(null);
-        setNovaOpen((v) => !v);
-      } else if (e.code === 'KeyK') {
-        setPhoneOpen(false);
-        setMapOpen(false);
-        setBagOpen(false);
-        setShopVenue(null);
-        setNovaOpen(false);
-        setSpotifyDashOpen((v) => !v);
-      } else if (e.code === 'KeyP') {
-        setDemoOpen((v) => !v);
+        setSettingsOpen(false);
+        setCarSpotifyOpen((v) => !v);
       } else if (e.code === 'Escape') {
-        setPhoneOpen(false);
-        setMapOpen(false);
-        setBagOpen(false);
-        setShopVenue(null);
-        setNovaOpen(false);
-        setSpotifyDashOpen(false);
+        if (phoneOpen || mapOpen || shopVenue || carSpotifyOpen) {
+          setPhoneOpen(false);
+          setMapOpen(false);
+          setShopVenue(null);
+          setCarSpotifyOpen(false);
+        } else {
+          setSettingsOpen((v) => !v);
+        }
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [phoneOpen, mapOpen, shopVenue, carSpotifyOpen]);
 
-  // Block driving/shooting input when full modals (Map, Bag, Shop, Nova Chat) are open
+  // Close car Spotify automatically if player exits car
   useEffect(() => {
-    engineRef.current?.setUiBlocksInput(mapOpen || bagOpen || shopVenue !== null || novaOpen);
-  }, [mapOpen, bagOpen, shopVenue, novaOpen]);
+    if (hud && !hud.inVehicle && carSpotifyOpen) {
+      setCarSpotifyOpen(false);
+    }
+  }, [hud?.inVehicle, carSpotifyOpen]);
+
+  // Block game input when any modal/menu/phone-on-foot is open (unlocking cursor cleanly!)
+  useEffect(() => {
+    const block = mapOpen || settingsOpen || shopVenue !== null || (phoneOpen && !hud?.inVehicle);
+    engineRef.current?.setUiBlocksInput(block);
+    if (phoneOpen || carSpotifyOpen) {
+      engineRef.current?.exitPointerLock();
+    }
+  }, [mapOpen, settingsOpen, shopVenue, phoneOpen, carSpotifyOpen, hud?.inVehicle]);
 
   const eng = engineRef.current;
 
@@ -126,7 +122,7 @@ export function App() {
 
   const handleToggleSpotifyActive = (active: boolean) => {
     const preset = SPOTIFY_PRESETS.find((p) => p.embedUrl === spotifyEmbedUrl);
-    eng?.setSpotifyStatus(active, preset?.title ?? 'Spotify Connect');
+    eng?.setSpotifyStatus(active, preset?.title ?? 'Spotify');
   };
 
   return (
@@ -145,64 +141,50 @@ export function App() {
           <HUD
             hud={hud}
             phoneOpen={phoneOpen}
-            spotifyOpen={spotifyDashOpen}
             onTogglePhone={() => {
-              setSpotifyDashOpen(false);
+              setCarSpotifyOpen(false);
               setMapOpen(false);
+              setSettingsOpen(false);
+              setPhoneInitialApp('home');
               setPhoneOpen((v) => !v);
             }}
-            onToggleSpotify={() => {
+            onToggleCarSpotify={() => {
               setPhoneOpen(false);
-              setSpotifyDashOpen((v) => !v);
+              setCarSpotifyOpen((v) => !v);
             }}
-            onOpenBag={() => {
-              setShopVenue(null);
-              setBagOpen(true);
-            }}
-            onOpenNova={() => setNovaOpen(true)}
-            onOpenFullMap={() => {
+            onOpenSettings={() => {
               setPhoneOpen(false);
-              setMapOpen(true);
+              setMapOpen(false);
+              setCarSpotifyOpen(false);
+              setSettingsOpen(true);
             }}
-            onQuickLaunchNextMission={() => eng.launchMission(eng.missions.getNextCampaignMissionId())}
-            onTriggerHack={(k) => eng.activateNetHack(k)}
+            onSelectWeapon={(w) => eng.selectWeapon(w)}
           />
 
           <Minimap
             hud={hud}
             onOpenFullMap={() => {
               setPhoneOpen(false);
+              setSettingsOpen(false);
               setMapOpen(true);
             }}
           />
 
-          <DemoToolbar
-            hud={hud}
-            open={demoOpen}
-            onToggle={() => setDemoOpen((v) => !v)}
-            onSetTime={(t) => eng.setTimeOfDay(t)}
-            onAddStar={() => eng.demoAddWantedStar()}
-            onClearStars={() => eng.demoClearWanted()}
-            onSpawnHypercar={() => eng.summonVehicle('hypercar')}
-            onAddCash={() => eng.demoAddCash()}
-            onTeleport={(loc) => eng.demoTeleport(loc)}
-          />
-
-          {/* In-Car Dashboard Spotify Connect Infotainment Console ([K]) */}
-          {spotifyDashOpen && (
+          {/* In-Car Music Player / Spotify Connect ONLY while inside vehicle ([K])! */}
+          {carSpotifyOpen && hud.inVehicle && (
             <div
               className="glass-panel animate-pop"
               style={{
                 position: 'fixed',
                 right: 22,
-                bottom: 84,
-                width: 440,
+                bottom: 74,
+                width: 430,
                 maxWidth: '92vw',
                 padding: 16,
                 borderRadius: 20,
                 border: '2px solid rgba(29, 185, 84, 0.72)',
-                boxShadow: '0 20px 60px rgba(0,0,0,0.8), 0 0 28px rgba(29,185,84,0.28)',
-                zIndex: 46,
+                boxShadow: '0 20px 60px rgba(0,0,0,0.8)',
+                zIndex: 47,
               }}
             >
               <SpotifyConnectPanel
@@ -211,60 +193,71 @@ export function App() {
                 spotifyActive={hud.spotifyActive}
                 onSelectTrack={handleSelectSpotify}
                 onToggleActive={handleToggleSpotifyActive}
-                onClose={() => setSpotifyDashOpen(false)}
-                modeLabel={hud.inVehicle ? `${hud.vehicleName} • SPOTIFY DASH` : 'SPOTIFY CONNECT PLAYER'}
+                onClose={() => setCarSpotifyOpen(false)}
+                modeLabel={`${hud.vehicleName} • CAR MUSIC PLAYER`}
               />
             </div>
           )}
 
+          {/* Realistic Smartphone UI (Messages w/ Nova, Spotify, Missions To-Do, Bag, Outfits, Fleet, Net-Hack) */}
           {phoneOpen && (
             <Smartphone
               hud={hud}
+              initialApp={phoneInitialApp}
               spotifyEmbedUrl={spotifyEmbedUrl}
               onSelectSpotify={handleSelectSpotify}
               onToggleSpotifyActive={handleToggleSpotifyActive}
               onClose={() => setPhoneOpen(false)}
+              onSendMessageToNova={(msg) => void eng.sendMessageToNova(msg)}
+              onSummonNova={() => eng.summonNovaNearby()}
               onLaunchMission={(id) => eng.launchMission(id)}
               onLaunchRace={(id) => eng.launchStreetRace(id)}
               onTriggerHack={(k) => eng.activateNetHack(k)}
               onBuyUpgrade={(k) => eng.buyUpgrade(k)}
               onSummonVehicle={(t) => eng.summonVehicle(t)}
               onRepaintVehicle={() => eng.repaintCurrentVehicle()}
+              onUseInventoryItem={(id) => eng.useInventoryItem(id)}
+              onEquipOutfit={(id) => eng.buyOrEquipOutfit(id)}
               onSetRadio={(st) => eng.setRadioStation(st)}
-              onSetVolumes={(m, mus, sfx) => eng.setAudioVolumes(m, mus, sfx)}
             />
           )}
 
+          {/* Complex Interactive Landmark City Map ([M]) */}
           {mapOpen && (
             <FullMapModal
               hud={hud}
               onClose={() => setMapOpen(false)}
-              onSetWaypoint={(pt) => eng.setCustomWaypoint(pt)}
+              onSetWaypoint={(pt, lbl) => eng.setCustomWaypoint(pt, lbl)}
+              onInviteNovaToLandmark={(name, x, z) => eng.inviteNovaToDestination(name, x, z)}
             />
           )}
 
-          {(bagOpen || shopVenue !== null) && (
+          {/* Venue Shop / Food Court / Café / Clothing Store Fitting Room */}
+          {shopVenue !== null && (
             <InventoryModal
               hud={hud}
-              mode={shopVenue !== null ? 'shop' : 'bag'}
+              mode="shop"
               venue={shopVenue}
-              onClose={() => {
-                setBagOpen(false);
-                setShopVenue(null);
-              }}
+              onClose={() => setShopVenue(null)}
               onBuyItem={(id, eatNow) => eng.buyShopItem(id, eatNow)}
               onUseItem={(id) => eng.useInventoryItem(id)}
+              onBuyOrEquipOutfit={(id) => eng.buyOrEquipOutfit(id)}
             />
           )}
 
-          {novaOpen && (
-            <SentientChatModal
+          {/* Game Settings, Weather, Audio, Controls & Fast-Travel Menu ([ESC]) */}
+          {settingsOpen && (
+            <SettingsMenuModal
               hud={hud}
-              maskedKey={eng.nova.getApiKeyMasked()}
-              onClose={() => setNovaOpen(false)}
-              onSaveApiConfig={(k, m) => eng.setNovaApiConfig(k, m)}
-              onSendMessage={(msg) => void eng.sendMessageToNova(msg)}
-              onSummonNova={() => eng.summonNovaNearby()}
+              onClose={() => setSettingsOpen(false)}
+              onSetTime={(t) => eng.setTimeOfDay(t)}
+              onSetWeather={(w) => eng.setWeather(w)}
+              onSetVolumes={(m, mus, sfx) => eng.setAudioVolumes(m, mus, sfx)}
+              onAddStar={() => eng.demoAddWantedStar()}
+              onClearStars={() => eng.demoClearWanted()}
+              onSpawnHypercar={() => eng.summonVehicle('hypercar')}
+              onAddCash={() => eng.demoAddCash()}
+              onTeleport={(loc) => eng.demoTeleport(loc)}
             />
           )}
 
