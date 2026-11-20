@@ -18,7 +18,8 @@ export class MissionManager {
   private timer = 0;
   private beaconGroup: THREE.Group;
   private beaconRing: THREE.Mesh;
-  private guideArrow: THREE.Group;
+  private gpsChevrons: THREE.Mesh[] = [];
+  private gpsChevronMat: THREE.MeshBasicMaterial;
   private dropPos: Vec2 | null = null;
   private prototypeCar: VehicleEntity | null = null;
   private vaultVan: VehicleEntity | null = null;
@@ -64,20 +65,36 @@ export class MissionManager {
     this.beaconGroup.visible = false;
     scene.add(this.beaconGroup);
 
-    // Floating 3D Neon Guidance Arrow right above player pointing straight to active target!
-    this.guideArrow = new THREE.Group();
-    const arrowMat = new THREE.MeshBasicMaterial({
-      color: 0xfacc15,
+    // Sleek Next-Gen 3D Road-Projected Holographic GPS Navigation Chevrons! (Replaces clunky floating yellow block arrow)
+    const chevShape = new THREE.Shape();
+    chevShape.moveTo(0, 1.35);
+    chevShape.lineTo(1.45, -0.35);
+    chevShape.lineTo(0.88, -0.95);
+    chevShape.lineTo(0, 0.15);
+    chevShape.lineTo(-0.88, -0.95);
+    chevShape.lineTo(-1.45, -0.35);
+    chevShape.closePath();
+
+    const chevGeo = new THREE.ShapeGeometry(chevShape);
+    chevGeo.rotateX(-Math.PI / 2);
+    // Align pointing along +Z
+    chevGeo.rotateY(Math.PI);
+
+    this.gpsChevronMat = new THREE.MeshBasicMaterial({
+      color: 0x00f5ff,
       transparent: true,
-      opacity: 0.9,
+      opacity: 0.76,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
     });
-    const shaft = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.16, 1.35), arrowMat);
-    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.0, 4), arrowMat);
-    tip.rotation.x = Math.PI / 2;
-    tip.position.z = 1.05;
-    this.guideArrow.add(shaft, tip);
-    this.guideArrow.visible = false;
-    scene.add(this.guideArrow);
+
+    for (let i = 0; i < 18; i++) {
+      const m = new THREE.Mesh(chevGeo, this.gpsChevronMat);
+      m.visible = false;
+      scene.add(m);
+      this.gpsChevrons.push(m);
+    }
   }
 
   public getNextCampaignMissionId(): string {
@@ -94,7 +111,7 @@ export class MissionManager {
     this.prototypeCar = null;
     this.vaultVan = null;
     this.beaconGroup.visible = false;
-    this.guideArrow.visible = false;
+    for (const c of this.gpsChevrons) c.visible = false;
     this.combat.clearMissionEnemies();
     for (const v of this.missionVehicles) {
       if (v.driver !== 'player') {
@@ -421,6 +438,53 @@ export class MissionManager {
     };
   }
 
+  /** Renders animated 3D glowing GPS chevron pads directly along the asphalt road path! */
+  public updateGpsRibbon(gpsPath: Vec2[], elapsed: number, isRace: boolean): void {
+    if (gpsPath.length < 2) {
+      for (const c of this.gpsChevrons) c.visible = false;
+      return;
+    }
+
+    this.gpsChevronMat.color.setHex(isRace ? 0x22ff88 : 0x00f5ff);
+    const spacing = 10.5;
+    const flowOffset = (elapsed * 14) % spacing;
+
+    // Sample points spaced cleanly along the polyline starting 7m ahead of player
+    let chevIdx = 0;
+    let distAccum = -7 - flowOffset;
+
+    for (let s = 0; s < gpsPath.length - 1 && chevIdx < this.gpsChevrons.length; s++) {
+      const a = gpsPath[s];
+      const b = gpsPath[s + 1];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const segLen = Math.hypot(dx, dz);
+      if (segLen < 0.5) continue;
+      const angle = Math.atan2(dx, dz);
+
+      let tDist = distAccum < 0 ? -distAccum : spacing - distAccum;
+      while (tDist <= segLen && chevIdx < this.gpsChevrons.length) {
+        const frac = tDist / segLen;
+        const px = a.x + dx * frac;
+        const pz = a.z + dz * frac;
+        const py = Math.max(0.18, this.grid.getGroundHeight(px, pz) + 0.22);
+        const chev = this.gpsChevrons[chevIdx++];
+        chev.position.set(px, py, pz);
+        chev.rotation.y = angle;
+        const pulse = 0.85 + Math.sin(elapsed * 6 - chevIdx * 0.65) * 0.22;
+        chev.scale.setScalar(pulse);
+        chev.visible = true;
+        tDist += spacing;
+      }
+      distAccum = (distAccum + segLen) % spacing;
+      if (distAccum < 0) distAccum += spacing;
+    }
+
+    for (let i = chevIdx; i < this.gpsChevrons.length; i++) {
+      this.gpsChevrons[i].visible = false;
+    }
+  }
+
   public update(
     dt: number,
     elapsed: number,
@@ -429,16 +493,6 @@ export class MissionManager {
     playerZ: number,
     playerVeh: VehicleEntity | null
   ): void {
-    // Animate beacon & floating 3D guidance arrow above player!
-    const target = this.getCurrentTargetPos();
-    if (target) {
-      this.guideArrow.visible = true;
-      this.guideArrow.position.set(playerX, playerY + 4.0 + Math.sin(elapsed * 5) * 0.22, playerZ);
-      this.guideArrow.rotation.y = Math.atan2(target.x - playerX, target.z - playerZ);
-    } else {
-      this.guideArrow.visible = false;
-    }
-
     if (this.beaconGroup.visible) {
       this.beaconGroup.children[2].rotation.y = elapsed * 2.5;
       const s = 1 + Math.sin(elapsed * 4.5) * 0.1;

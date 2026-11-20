@@ -109,6 +109,34 @@ export const Minimap: React.FC<MinimapProps> = ({ hud, onOpenFullMap }) => {
       if (b.kind === 'traffic') {
         ctx.fillStyle = 'rgba(148, 163, 184, 0.55)';
         ctx.fillRect(dx - 1.5, dy - 1.5, 3, 3);
+      } else if (b.kind === 'interior') {
+        ctx.fillStyle = '#ff47a3';
+        ctx.fillRect(dx - 3.5, dy - 3.5, 7, 7);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(dx - 3.5, dy - 3.5, 7, 7);
+      } else if (b.kind === 'boat') {
+        ctx.fillStyle = '#38bdf8';
+        ctx.beginPath();
+        ctx.arc(dx, dy, 4, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (b.kind === 'fly_heli') {
+        ctx.fillStyle = '#f8fafc';
+        ctx.beginPath();
+        ctx.arc(dx, dy, 4.8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#041222';
+        ctx.font = 'bold 8px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('H', dx, dy + 2.8);
+      } else if (b.kind === 'nova') {
+        ctx.fillStyle = '#c084fc';
+        ctx.beginPath();
+        ctx.arc(dx, dy, 4.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
       } else if (b.kind === 'police') {
         ctx.fillStyle = Math.floor(now / 180) % 2 === 0 ? '#ff1e42' : '#00d9ff';
         ctx.beginPath();

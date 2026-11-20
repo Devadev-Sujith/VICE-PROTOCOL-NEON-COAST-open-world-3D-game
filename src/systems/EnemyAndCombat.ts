@@ -20,7 +20,7 @@ interface Projectile {
 export class EnemyAndCombat {
   public enemies: EnemyUnit[] = [];
   private projectiles: Projectile[] = [];
-  private boltGeo = new THREE.BoxGeometry(0.22, 0.22, 1.35);
+  private boltGeo = new THREE.BoxGeometry(0.08, 0.08, 1.85);
   private nextId = 1;
 
   public onEnemyDestroyed?: (enemy: EnemyUnit) => void;
@@ -124,7 +124,7 @@ export class EnemyAndCombat {
     return unit;
   }
 
-  /** Player fires a bright cyan plasma bolt with generous soft auto-aim toward nearby threats/targets! */
+  /** Fires high-velocity realistic AK-47 7.62mm tracer round (pinpoint 2.2x crit damage when scoped!) */
   public firePlayerBolt(
     ox: number,
     oy: number,
@@ -134,20 +134,21 @@ export class EnemyAndCombat {
     dirZ: number,
     upgrades: UpgradeState,
     vehicles: VehicleEntity[],
-    destructibles: DestructibleProp[]
+    destructibles: DestructibleProp[],
+    isScoped = false
   ): void {
-    // Soft auto-aim assist within 55m cone so action feels snappy & heroic!
+    // Gentle lock-assist on hip fire; exact manual crosshair precision when sniping through scope!
     let bestDirX = dirX;
     let bestDirY = dirY;
     let bestDirZ = dirZ;
-    let bestScore = 0.65; // cos(angle)
+    let bestScore = isScoped ? 0.985 : 0.78;
 
     const tryLock = (tx: number, ty: number, tz: number, bonus = 0) => {
       const dx = tx - ox;
       const dy = ty - oy;
       const dz = tz - oz;
       const dist = Math.hypot(dx, dy, dz);
-      if (dist > 62 || dist < 1) return;
+      if (dist > (isScoped ? 160 : 75) || dist < 1) return;
       const dot = (dx * dirX + dz * dirZ) / Math.hypot(dx, dz);
       if (dot + bonus > bestScore) {
         bestScore = dot + bonus;
@@ -158,26 +159,27 @@ export class EnemyAndCombat {
     };
 
     for (const e of this.enemies) {
-      if (e.alive) tryLock(e.x, e.y + (e.kind === 'relay_tower' ? 3.5 : 1.2), e.z, 0.25);
+      if (e.alive) tryLock(e.x, e.y + (e.kind === 'relay_tower' ? 3.5 : 1.35), e.z, isScoped ? 0.01 : 0.16);
     }
     for (const v of vehicles) {
       if (!v.destroyed && (v.driver === 'enemy' || v.driver === 'police' || v.isMissionTarget)) {
-        tryLock(v.x, v.y + 1.1, v.z, 0.18);
+        tryLock(v.x, v.y + 1.1, v.z, isScoped ? 0.008 : 0.12);
       }
     }
     for (const p of destructibles) {
       if (!p.destroyed && p.kind === 'barrel') {
-        tryLock(p.x, p.y + 0.8, p.z, 0.12);
+        tryLock(p.x, p.y + 0.8, p.z, isScoped ? 0.01 : 0.1);
       }
     }
 
-    const speed = 92;
-    const mat = new THREE.MeshBasicMaterial({ color: 0x00f5ff });
+    const speed = isScoped ? 195 : 148;
+    const mat = new THREE.MeshBasicMaterial({ color: isScoped ? 0xfff3b0 : 0xffbe55 });
     const mesh = new THREE.Mesh(this.boltGeo, mat);
     mesh.position.set(ox, oy, oz);
     mesh.lookAt(ox + bestDirX, oy + bestDirY, oz + bestDirZ);
     this.scene.add(mesh);
 
+    const baseDmg = 28 + upgrades.blasterLevel * 12;
     this.projectiles.push({
       mesh,
       x: ox,
@@ -187,9 +189,31 @@ export class EnemyAndCombat {
       vy: bestDirY * speed,
       vz: bestDirZ * speed,
       fromPlayer: true,
-      damage: 26 + upgrades.blasterLevel * 12,
-      life: 0.9,
+      damage: isScoped ? Math.round(baseDmg * 2.15) : baseDmg,
+      life: isScoped ? 1.15 : 0.72,
     });
+  }
+
+  /** Calculates live tactical rangefinder distance in meters when scoped in! */
+  public getScopeRangeMeters(
+    ox: number,
+    oz: number,
+    dirX: number,
+    dirZ: number,
+    vehicles: VehicleEntity[]
+  ): number | null {
+    let bestD: number | null = null;
+    const check = (tx: number, tz: number) => {
+      const dx = tx - ox;
+      const dz = tz - oz;
+      const d = Math.hypot(dx, dz);
+      if (d < 2 || d > 220) return;
+      const dot = (dx * dirX + dz * dirZ) / d;
+      if (dot > 0.965 && (bestD === null || d < bestD)) bestD = Math.round(d);
+    };
+    for (const e of this.enemies) if (e.alive) check(e.x, e.z);
+    for (const v of vehicles) if (!v.destroyed && v.driver !== 'player') check(v.x, v.z);
+    return bestD;
   }
 
   public triggerAreaExplosion(

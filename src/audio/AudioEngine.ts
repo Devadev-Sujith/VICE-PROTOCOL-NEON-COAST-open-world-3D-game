@@ -28,6 +28,7 @@ export class AudioEngine {
   private sirenGain: GainNode | null = null;
 
   public station: RadioStationId = 'wave88';
+  public spotifyActive = false;
   public masterVolume = 0.72;
   public musicVolume = 0.55;
   public sfxVolume = 0.75;
@@ -187,8 +188,8 @@ export class AudioEngine {
       }
     }
 
-    // Procedural Multi-Station Radio Sequencer!
-    if (playing && this.station !== 'off') {
+    // Procedural Multi-Station Radio Sequencer (auto-mutes when Spotify Connect is active!)
+    if (playing && this.station !== 'off' && !this.spotifyActive) {
       const bpm = this.station === 'wave88' ? 116 : this.station === 'palm101' ? 86 : 132;
       const sixteenth = 60 / bpm / 4;
       this.stepAccum += dt;
@@ -349,20 +350,44 @@ export class AudioEngine {
     src.start(now);
   }
 
-  public playBlaster(): void {
+  /** Realistic punchy AK-47 7.62mm ballistic rifle gunshot (sharp crack + deep breech punch!) */
+  public playBlaster(isScoped = false): void {
     if (!this.ctx || !this.sfxGain) return;
     const now = this.ctx.currentTime;
+
+    // 1. Sharp ballistic gunpowder crack (filtered noise burst)
+    const dur = isScoped ? 0.18 : 0.12;
+    const buf = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * dur), this.ctx.sampleRate);
+    const ch = buf.getChannelData(0);
+    for (let i = 0; i < ch.length; i++) {
+      ch[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / ch.length, 2.2);
+    }
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const hp = this.ctx.createBiquadFilter();
+    hp.type = 'bandpass';
+    hp.frequency.value = isScoped ? 1400 : 1850;
+    hp.Q.value = 0.7;
+    const nGain = this.ctx.createGain();
+    nGain.gain.setValueAtTime(isScoped ? 0.34 : 0.25, now);
+    nGain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+    src.connect(hp);
+    hp.connect(nGain);
+    nGain.connect(this.sfxGain);
+    src.start(now);
+
+    // 2. Deep mechanical rifle thump
     const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.type = 'square';
-    osc.frequency.setValueAtTime(980, now);
-    osc.frequency.exponentialRampToValueAtTime(210, now + 0.11);
-    gain.gain.setValueAtTime(0.14, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
-    osc.connect(gain);
-    gain.connect(this.sfxGain);
+    const oGain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(isScoped ? 165 : 210, now);
+    osc.frequency.exponentialRampToValueAtTime(42, now + 0.08);
+    oGain.gain.setValueAtTime(0.24, now);
+    oGain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+    osc.connect(oGain);
+    oGain.connect(this.sfxGain);
     osc.start(now);
-    osc.stop(now + 0.13);
+    osc.stop(now + 0.1);
   }
 
   public playHorn(): void {

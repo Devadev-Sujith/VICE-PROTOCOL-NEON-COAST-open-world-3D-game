@@ -1,8 +1,10 @@
 import * as THREE from 'three';
 import type { DestructibleProp } from '../core/types';
 import {
+  BUILDING_ENTRANCES,
   CityGrid,
   FERRIS_WHEEL_POS,
+  HELIPAD_POSITIONS,
   LIGHTHOUSE_POS,
   PAY_N_SPRAY_POS,
   PIER_YACHT_POS,
@@ -28,6 +30,7 @@ export class CityBuilder {
   public getawayYacht?: THREE.Group;
   public neonMaterials: THREE.MeshStandardMaterial[] = [];
   public trafficLightMats: TrafficLightBulbPair[] = [];
+  public vendingMachines: { x: number; z: number; label: string }[] = [];
   private nextPropId = 1;
 
   constructor(
@@ -48,6 +51,7 @@ export class CityBuilder {
     this.buildCityBlocksAndSkyline();
     this.buildStuntRamps();
     this.buildPalmsAndDestructibles();
+    this.buildInteractiveCityLandmarks();
     this.buildGetawayYacht();
   }
 
@@ -955,6 +959,8 @@ export class CityBuilder {
       const gy = this.grid.getGroundHeight(px, pz);
       g.position.set(px, Math.max(-0.3, gy), pz);
       this.worldGroup.add(g);
+      // Register solid realistic trunk collision so vehicles & players cannot pass through trees!
+      this.grid.addTreeCollider(px, pz, 0.72, h + 1);
     }
 
     // 2. Destructible Streetlamps, Fire Hydrants (water geysers!), Beach Umbrellas, Crates & Explosive Barrels!
@@ -1083,6 +1089,89 @@ export class CityBuilder {
       const sideZ = -Math.sin(r.angle) * (r.width * 0.5 + 1.1);
       spawnProp('cone', r.x + sideX, r.z + sideZ);
       spawnProp('cone', r.x - sideX, r.z - sideZ);
+    }
+  }
+
+  private buildInteractiveCityLandmarks(): void {
+    // 1. Glowing Enterable Building Portals (Mall, Sunset Café, Apex Corporate Office!)
+    for (const ent of BUILDING_ENTRANCES) {
+      const g = new THREE.Group();
+      const frameMat = new THREE.MeshStandardMaterial({
+        color: ent.color,
+        emissive: ent.color,
+        emissiveIntensity: 2.0,
+      });
+      this.neonMaterials.push(frameMat);
+
+      // Glowing neon entrance archway + glass doors + welcome ring on sidewalk
+      const archL = new THREE.Mesh(new THREE.BoxGeometry(0.45, 4.4, 0.45), frameMat);
+      archL.position.set(-2.3, 2.2, 0);
+      const archR = archL.clone();
+      archR.position.x = 2.3;
+      const archTop = new THREE.Mesh(new THREE.BoxGeometry(5.1, 0.55, 0.6), frameMat);
+      archTop.position.set(0, 4.4, 0);
+
+      const glassDoor = new THREE.Mesh(
+        new THREE.BoxGeometry(4.1, 4.0, 0.14),
+        new THREE.MeshBasicMaterial({ color: ent.color, transparent: true, opacity: 0.34 })
+      );
+      glassDoor.position.set(0, 2.0, 0);
+
+      const floorPortal = new THREE.Mesh(
+        new THREE.RingGeometry(1.5, 2.1, 24),
+        new THREE.MeshBasicMaterial({ color: ent.color, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
+      );
+      floorPortal.rotation.x = -Math.PI / 2;
+      floorPortal.position.set(0, 0.18, 1.4);
+
+      g.add(archL, archR, archTop, glassDoor, floorPortal);
+      g.position.set(ent.x, Math.max(0.1, this.grid.getGroundHeight(ent.x, ent.z)), ent.z);
+      g.rotation.y = ent.facingAngle;
+      this.worldGroup.add(g);
+    }
+
+    // 2. Glowing Helipads (Ocean Drive & Starlight Plaza)
+    const padMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7 });
+    const hGlow = new THREE.MeshBasicMaterial({ color: 0xfacc15, side: THREE.DoubleSide });
+    for (const hp of HELIPAD_POSITIONS) {
+      const pad = new THREE.Group();
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(8.5, 8.8, 0.3, 24), padMat);
+      base.position.y = 0.15;
+      const ring = new THREE.Mesh(new THREE.RingGeometry(6.8, 7.6, 28), hGlow);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.33;
+      const hBar1 = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 5.8), hGlow);
+      hBar1.rotation.x = -Math.PI / 2;
+      hBar1.position.set(-2.0, 0.33, 0);
+      const hBar2 = hBar1.clone();
+      hBar2.position.x = 2.0;
+      const hMid = new THREE.Mesh(new THREE.PlaneGeometry(4.0, 1.1), hGlow);
+      hMid.rotation.x = -Math.PI / 2;
+      hMid.position.set(0, 0.33, 0);
+      pad.add(base, ring, hBar1, hBar2, hMid);
+      pad.position.set(hp.x, Math.max(0.05, this.grid.getGroundHeight(hp.x, hp.z)), hp.z);
+      this.worldGroup.add(pad);
+    }
+
+    // 3. Interactive Street Vending Machines (buy cold Neon Cola on sidewalks!)
+    const vmMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.4, metalness: 0.5 });
+    const vmFrontMat = new THREE.MeshBasicMaterial({ color: 0x00f5ff });
+    const vmSpots: [number, number][] = [
+      [170, 98],
+      [11, -12],
+      [-78, 98],
+      [194, -18],
+    ];
+    for (const [vx, vz] of vmSpots) {
+      const vm = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.2, 0.9), vmMat);
+      body.position.y = 1.1;
+      const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 1.3), vmFrontMat);
+      screen.position.set(0, 1.25, 0.46);
+      vm.add(body, screen);
+      vm.position.set(vx, Math.max(0.1, this.grid.getGroundHeight(vx, vz)), vz);
+      this.worldGroup.add(vm);
+      this.vendingMachines.push({ x: vx, z: vz, label: '[E] USE NEON VENDING MACHINE ($10)' });
     }
   }
 

@@ -76,6 +76,8 @@ export class WorldActivities {
   public activeRaceTimer = 0;
   public raceRivals: VehicleEntity[] = [];
   private raceRivalProgress: number[] = [];
+  private raceRivalRoutes: { x: number; z: number }[][] = [];
+  private raceRivalRouteIdx: number[] = [];
   private raceBeacon: THREE.Group;
 
   // Dynamic Free-Roam Cash Van Event
@@ -198,7 +200,9 @@ export class WorldActivities {
     this.activeRaceCpIndex = 0;
     this.activeRaceTimer = 68;
 
-    // Spawn 2 sleek AI Rival Racers right beside the start line!
+    // Spawn 2 sleek AI Rival Racers with FULL ROAD-FOLLOWING NAVIGATION ROUTES (zero building crashes!)
+    this.raceRivalRoutes = [];
+    this.raceRivalRouteIdx = [];
     for (let i = 0; i < 2; i++) {
       const side = i === 0 ? -3.4 : 3.4;
       const rx = def.startX + Math.cos(def.startHeading) * side;
@@ -212,9 +216,14 @@ export class WorldActivities {
         'racer',
         i === 0 ? 0xf97316 : 0xa855f7
       );
+      rival.aiStuckTimer = 0;
       this.scene.add(rival.mesh);
       this.raceRivals.push(rival);
       this.raceRivalProgress.push(0);
+      // Precompute exact Manhattan road-grid route along real boulevards through all checkpoints!
+      const roadRoute = this.grid.buildRoadRouteForCheckpoints({ x: def.startX, z: def.startZ }, def.checkpoints);
+      this.raceRivalRoutes.push(roadRoute);
+      this.raceRivalRouteIdx.push(0);
     }
 
     if (playerVeh) {
@@ -247,6 +256,8 @@ export class WorldActivities {
     }
     this.raceRivals = [];
     this.raceRivalProgress = [];
+    this.raceRivalRoutes = [];
+    this.raceRivalRouteIdx = [];
   }
 
   public getRacePlace(playerX: number, playerZ: number): number {
@@ -264,23 +275,69 @@ export class WorldActivities {
     return place;
   }
 
-  public computeRivalInput(idx: number): VehicleInput {
+  public computeRivalInput(idx: number, dt = 0.016): VehicleInput {
     const r = this.raceRivals[idx];
-    if (!r || !this.activeRace) return { throttle: 0, steer: 0, handbrake: false, nitro: false };
-    const cpIdx = Math.min(this.raceRivalProgress[idx], this.activeRace.checkpoints.length - 1);
-    const cp = this.activeRace.checkpoints[cpIdx];
-    const dist = Math.hypot(cp.x - r.x, cp.z - r.z);
-    if (dist < 14 && this.raceRivalProgress[idx] < this.activeRace.checkpoints.length - 1) {
+    const route = this.raceRivalRoutes[idx];
+    if (!r || !this.activeRace || !route || route.length === 0) {
+      return { throttle: 0, steer: 0, handbrake: false, nitro: false };
+    }
+
+    // Track main checkpoint progress accurately
+    const mainCpIdx = Math.min(this.raceRivalProgress[idx], this.activeRace.checkpoints.length - 1);
+    const mainCp = this.activeRace.checkpoints[mainCpIdx];
+    if (Math.hypot(mainCp.x - r.x, mainCp.z - r.z) < 16 && this.raceRivalProgress[idx] < this.activeRace.checkpoints.length - 1) {
       this.raceRivalProgress[idx]++;
     }
-    const desired = Math.atan2(cp.x - r.x, cp.z - r.z);
+
+    // Follow exact road-grid navigation nodes so rivals NEVER cut diagonally into buildings!
+    let rIdx = this.raceRivalRouteIdx[idx] ?? 0;
+    while (rIdx < route.length - 1 && Math.hypot(route[rIdx].x - r.x, route[rIdx].z - r.z) < 12) {
+      rIdx++;
+      this.raceRivalRouteIdx[idx] = rIdx;
+    }
+
+    const node = route[Math.min(rIdx, route.length - 1)];
+    const nextNode = route[Math.min(rIdx + 1, route.length - 1)];
+    // Subtle lane offset so the two rivals race side-by-side cleanly without colliding
+    const laneOff = idx === 0 ? -2.2 : 2.2;
+    const tx = node.x + (Math.abs(nextNode.x - node.x) < 2 ? laneOff : 0);
+    const tz = node.z + (Math.abs(nextNode.z - node.z) < 2 ? laneOff : 0);
+
+    // Anti-stuck safeguard: if blocked by traffic for >1.8s, smoothly realign onto current road node!
+    if (Math.abs(r.speed) < 2.2) {
+      r.aiStuckTimer = (r.aiStuckTimer ?? 0) + dt;
+      if (r.aiStuckTimer > 1.8) {
+        r.aiStuckTimer = 0;
+        const safe = this.grid.getNearestRoadPoint(r.x, r.z);
+        r.x = safe.x;
+        r.z = safe.z;
+        r.heading = Math.atan2(tx - r.x, tz - r.z);
+        r.vx = Math.sin(r.heading) * 14;
+        r.vz = Math.cos(r.heading) * 14;
+      }
+    } else {
+      r.aiStuckTimer = 0;
+    }
+
+    const desired = Math.atan2(tx - r.x, tz - r.z);
     let diff = desired - r.heading;
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
+
+    // Smart corner braking when approaching a 90° road intersection!
+    const distToNode = Math.hypot(tx - r.x, tz - r.z);
+    const nextAngle = Math.atan2(nextNode.x - node.x, nextNode.z - node.z);
+    let cornerTurn = Math.abs(nextAngle - desired);
+    if (cornerTurn > Math.PI) cornerTurn = Math.PI * 2 - cornerTurn;
+    const approachingSharpTurn = distToNode < 24 && cornerTurn > 0.7;
+
+    const targetSpd = approachingSharpTurn ? 19 : Math.abs(diff) > 0.45 ? 24 : 36;
+    const throttle = r.speed < targetSpd ? 0.94 : r.speed > targetSpd + 6 ? -0.45 : 0.15;
+
     return {
-      throttle: r.speed < 35 ? 0.92 : 0.25,
-      steer: Math.max(-1, Math.min(1, diff * 2.2)),
-      handbrake: Math.abs(diff) > 1.1 && r.speed > 14,
+      throttle,
+      steer: Math.max(-1, Math.min(1, diff * 2.4)),
+      handbrake: Math.abs(diff) > 0.95 && r.speed > 16,
       nitro: false,
     };
   }

@@ -5,19 +5,28 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { AudioEngine, RADIO_LABELS } from '../audio/AudioEngine';
 import { CameraRig } from '../entities/CameraRig';
 import { PlayerController } from '../entities/PlayerController';
-import { createVehicleEntity, repaintVehicle, REPAINT_PALETTE } from '../entities/VehicleFactory';
+import {
+  createVehicleEntity,
+  repaintVehicle,
+  REPAINT_PALETTE,
+  updateCockpitDashboard,
+} from '../entities/VehicleFactory';
 import { VehiclePhysics } from '../entities/VehiclePhysics';
 import { CAMPAIGN_MISSIONS, CAMPAIGN_TARGET_CASH } from '../missions/missionData';
 import { MissionManager } from '../missions/MissionManager';
 import { EnemyAndCombat } from '../systems/EnemyAndCombat';
 import { ParticlesVFX } from '../systems/ParticlesVFX';
 import { PedestrianAI } from '../systems/PedestrianAI';
+import { SentientAI } from '../systems/SentientAI';
 import { TrafficAI } from '../systems/TrafficAI';
 import { WantedSystem } from '../systems/WantedSystem';
 import { STREET_RACES, WorldActivities } from '../systems/WorldActivities';
 import { CityBuilder } from '../world/CityBuilder';
 import {
+  BOAT_DOCK_POSITIONS,
+  BUILDING_ENTRANCES,
   CityGrid,
+  HELIPAD_POSITIONS,
   HOSPITAL_RESPAWN,
   PAY_N_SPRAY_POS,
   PRECINCT_RESPAWN,
@@ -25,6 +34,7 @@ import {
   VALET_PLAZA_POS,
   VAULT_PLAZA_POS,
 } from '../world/CityGrid';
+import { InteriorBuilder, SHOP_CATALOG } from '../world/InteriorBuilder';
 import { createProceduralTextures } from '../world/ProceduralTextures';
 import { SkyAndLighting } from '../world/SkyAndLighting';
 import { EventBus } from './EventBus';
@@ -33,15 +43,25 @@ import type {
   DialogueMessage,
   DistrictId,
   GameMode,
+  GpsNavInfo,
   HudSnapshot,
+  InteriorId,
+  InventoryEntry,
   MinimapBlip,
   RadioStationId,
+  ShopCatalogItem,
   TimeOfDayPreset,
   UpgradeState,
   Vec2,
   VehicleEntity,
   VehicleType,
 } from './types';
+
+export interface EngineCallbacks {
+  onHudUpdate: (snap: HudSnapshot) => void;
+  onOpenShopVenue?: (venue: ShopCatalogItem['venue']) => void;
+  onOpenNovaChat?: () => void;
+}
 
 export class GameEngine {
   private container: HTMLElement;
@@ -55,6 +75,7 @@ export class GameEngine {
   public grid = new CityGrid();
   public sky: SkyAndLighting;
   public cityBuilder: CityBuilder;
+  public interiors: InteriorBuilder;
   public vfx: ParticlesVFX;
   public audio = new AudioEngine();
   public vehiclePhysics: VehiclePhysics;
@@ -62,6 +83,7 @@ export class GameEngine {
   public cameraRig: CameraRig;
   public traffic: TrafficAI;
   public peds: PedestrianAI;
+  public nova: SentientAI;
   public wanted: WantedSystem;
   public combat: EnemyAndCombat;
   public activities: WorldActivities;
@@ -69,12 +91,29 @@ export class GameEngine {
 
   // Game state
   public mode: GameMode = 'title';
-  public cash = 2500;
+  public cash = 3000;
   public stuntsCompleted = 0;
   public playerVehicle: VehicleEntity | null = null;
   private playerGarageVehicles: VehicleEntity[] = [];
+  public worldBoats: VehicleEntity[] = [];
+  public worldHelicopters: VehicleEntity[] = [];
   public customWaypoint: Vec2 | null = null;
   private currentDistrict: DistrictId = 'ocean_drive';
+
+  // Enterable Interior & Inventory Bag state
+  public currentInterior: InteriorId | null = null;
+  private exteriorReturnPos: { x: number; y: number; z: number; heading: number } | null = null;
+  public inventory: InventoryEntry[] = [
+    { item: SHOP_CATALOG.find((s) => s.id === 'neon_burger')!, qty: 1 },
+    { item: SHOP_CATALOG.find((s) => s.id === 'medkit')!, qty: 1 },
+  ];
+
+  // Spotify Connect shared state
+  public spotifyActive = false;
+  public spotifyTitle = 'Connect Spotify [K]';
+
+  // Weapon Aim / Scope state
+  public scopeToggle = false;
 
   public upgrades: UpgradeState = {
     nitroLevel: 0,
@@ -99,6 +138,7 @@ export class GameEngine {
   private driveByCooldown = 0;
   private hitstopTimer = 0;
   private deathRecoverTimer = 0;
+  private dashRedrawAccum = 0;
 
   // Input tracking
   private keys = new Set<string>();
@@ -116,20 +156,18 @@ export class GameEngine {
   private fpsFrames = 0;
   private fpsAccum = 0;
   private currentFps = 60;
-  private onHudUpdate: (snap: HudSnapshot) => void;
+  private callbacks: EngineCallbacks;
   private disposed = false;
 
-  constructor(container: HTMLElement, onHudUpdate: (snap: HudSnapshot) => void) {
+  constructor(container: HTMLElement, callbacks: EngineCallbacks) {
     this.container = container;
-    this.onHudUpdate = onHudUpdate;
+    this.callbacks = callbacks;
 
-    // Scene & Camera
     this.scene = new THREE.Scene();
     const w = container.clientWidth || window.innerWidth;
     const h = container.clientHeight || window.innerHeight;
-    this.camera = new THREE.PerspectiveCamera(62, w / h, 0.3, 1800);
+    this.camera = new THREE.PerspectiveCamera(62, w / h, 0.15, 2100);
 
-    // High-FPS Stylized WebGL Renderer + Tuned Bloom
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setSize(w, h);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
@@ -141,14 +179,14 @@ export class GameEngine {
 
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.42, 0.35, 0.78);
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.4, 0.35, 0.8);
     this.composer.addPass(this.bloomPass);
 
-    // Build World & Systems
     const textures = createProceduralTextures();
     this.sky = new SkyAndLighting(this.scene);
     this.cityBuilder = new CityBuilder(this.scene, this.grid, textures);
     this.cityBuilder.build();
+    this.interiors = new InteriorBuilder(this.scene);
 
     this.vfx = new ParticlesVFX(this.scene);
     this.vehiclePhysics = new VehiclePhysics(this.grid, this.events, this.vfx);
@@ -156,14 +194,15 @@ export class GameEngine {
     this.cameraRig = new CameraRig(this.camera);
     this.traffic = new TrafficAI(this.scene, this.grid);
     this.peds = new PedestrianAI(this.scene, this.grid);
+    this.nova = new SentientAI(this.scene, this.grid, this.events);
     this.wanted = new WantedSystem(this.scene, this.grid, this.events);
     this.combat = new EnemyAndCombat(this.scene, this.grid, this.vfx, this.events);
     this.activities = new WorldActivities(this.scene, this.grid, this.vfx, this.events);
     this.missions = new MissionManager(this.scene, this.grid, this.combat, this.wanted, this.vfx, this.events);
 
-    this.traffic.spawnInitialTraffic(22);
-    this.peds.spawnInitial(44);
-    this.spawnStarterVehicle();
+    this.traffic.spawnInitialTraffic(20);
+    this.peds.spawnInitial(34);
+    this.spawnStarterVehiclesAndFleet();
     this.bindCallbacksAndEvents();
     this.bindInputListeners();
 
@@ -172,26 +211,47 @@ export class GameEngine {
     this.loop(this.lastTime);
   }
 
-  private spawnStarterVehicle(): void {
-    // Sleek Miami V8 Muscle Car waiting on Ocean Drive facing glowing Neon Strip!
-    const starter = createVehicleEntity('muscle', 180, 0.05, 118, Math.PI, 'player', 0x00d9ff);
+  private spawnStarterVehiclesAndFleet(): void {
+    // 1. Starter Sculpted Miami V8 Muscle Car on Ocean Drive
+    const starter = createVehicleEntity('muscle', 180, 0.05, 118, Math.PI, 'player', 0x00c8ff);
     this.scene.add(starter.mesh);
     this.playerGarageVehicles.push(starter);
     this.playerVehicle = starter;
     this.player.setVisible(false);
     this.player.teleport(180, 0.05, 118, Math.PI);
 
-    // Park a bonus Beach Buggy near the boardwalk & a GT Coupe by Downtown for easy hijacking!
+    // Bonus parked Beach Buggy & GT Coupe
     const buggy = createVehicleEntity('buggy', 206, 0, 82, 0, 'none');
     const gt = createVehicleEntity('gt_coupe', 94, 0, 22, Math.PI, 'none', 0xa855f7);
     this.scene.add(buggy.mesh, gt.mesh);
     this.playerGarageVehicles.push(buggy, gt);
+
+    // 2. Moored Drivable Neon Wave Speedboats at Ocean Pier & Sunset Beach!
+    for (const d of BOAT_DOCK_POSITIONS) {
+      const boat = createVehicleEntity('speedboat', d.x, -0.7, d.z, d.heading, 'none');
+      this.scene.add(boat.mesh);
+      this.worldBoats.push(boat);
+    }
+
+    // 3. Parked Realistic Flyable Twin-Turbine Helicopters on Helipads!
+    for (const hp of HELIPAD_POSITIONS) {
+      const heli = createVehicleEntity(
+        'helicopter',
+        hp.x,
+        Math.max(0.15, this.grid.getGroundHeight(hp.x, hp.z) + 0.15),
+        hp.z,
+        hp.heading,
+        'none'
+      );
+      this.scene.add(heli.mesh);
+      this.worldHelicopters.push(heli);
+    }
   }
 
   private bindCallbacksAndEvents(): void {
     this.events.on('audio:crash', ({ intensity }) => this.audio.playCrash(intensity));
     this.events.on('audio:explosion', () => this.audio.playExplosion());
-    this.events.on('audio:blaster', () => this.audio.playBlaster());
+    this.events.on('audio:blaster', ({ isEmp }) => this.audio.playBlaster(!!isEmp));
     this.events.on('audio:horn', () => this.audio.playHorn());
     this.events.on('audio:cash', () => this.audio.playCash());
     this.events.on('audio:mission_passed', () => this.audio.playMissionPassed());
@@ -212,15 +272,32 @@ export class GameEngine {
       this.banner = { ...b };
     });
     this.events.on('wanted:crime', ({ severity, reason }) => {
-      if (this.mode === 'playing') {
+      if (this.mode === 'playing' && !this.currentInterior) {
         this.wanted.addCrime(severity, reason);
       }
     });
 
-    this.vehiclePhysics.onStuntLanded = (res) => {
-      if (res.landedOnYacht) {
-        this.missions.notifyYachtLanding();
+    // Sentient AI (NOVA) live world hooks!
+    this.nova.onGiftCash = (amt) => {
+      this.cash += amt;
+      this.audio.playCash();
+    };
+    this.nova.onHealPlayer = (amt) => {
+      this.player.heal(amt);
+      if (this.playerVehicle) {
+        this.playerVehicle.hp = Math.min(this.playerVehicle.maxHp, this.playerVehicle.hp + amt);
       }
+      this.audio.playPayNSpray();
+    };
+    this.nova.onDistractCops = () => {
+      if (this.wanted.stars > 0) {
+        this.wanted.setStars(Math.max(0, this.wanted.stars - 1));
+        this.audio.playEmpPulse();
+      }
+    };
+
+    this.vehiclePhysics.onStuntLanded = (res) => {
+      if (res.landedOnYacht) this.missions.notifyYachtLanding();
       this.stuntsCompleted++;
       const bonus = Math.min(3000, Math.round(res.distance * 32));
       this.cash += bonus;
@@ -368,17 +445,22 @@ export class GameEngine {
   };
 
   private handleMouseMove = (e: MouseEvent) => {
-    if (this.mode !== 'playing') return;
-    if (this.rightMouseDown || (!this.playerVehicle && this.mouseDown)) {
+    if (this.mode !== 'playing' || this.uiBlockInput) return;
+    const aiming = !this.playerVehicle && !this.currentInterior && (this.rightMouseDown || this.scopeToggle);
+    if (this.rightMouseDown || aiming || (!this.playerVehicle && this.mouseDown)) {
       const dx = e.clientX - this.lastMouseX;
       const dy = e.clientY - this.lastMouseY;
-      this.cameraRig.addMouseOrbit(dx, dy);
+      this.cameraRig.addMouseOrbit(dx, dy, aiming);
     }
     this.lastMouseX = e.clientX;
     this.lastMouseY = e.clientY;
   };
 
   private handleKeyDown = (e: KeyboardEvent) => {
+    // Never hijack typing inside text inputs (Spotify URL, Nova Chat, OpenAI API key!)
+    const tag = (e.target as HTMLElement | null)?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
     this.audio.unlock();
     const code = e.code;
     if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(code)) {
@@ -387,22 +469,30 @@ export class GameEngine {
     if (e.repeat) return;
     this.keys.add(code);
 
-    if (this.mode !== 'playing') return;
+    if (this.mode !== 'playing' || this.uiBlockInput) return;
 
-    if (code === 'KeyE') this.toggleVehicleEnterExit();
-    else if (code === 'KeyC') {
+    if (code === 'KeyE') {
+      this.handleContextInteract();
+    } else if (code === 'KeyV' && !this.playerVehicle && !this.currentInterior) {
+      this.scopeToggle = !this.scopeToggle;
+    } else if (code === 'KeyC') {
       const m = this.cameraRig.cycleMode();
-      this.radioToast = `CAMERA: ${m === 'chase' ? 'GTA 6 CHASE CAM' : m === 'topdown' ? 'CLASSIC TOP-DOWN' : 'BUMPER HOOD CAM'}`;
-      this.radioToastTtl = 2.2;
+      this.radioToast = `CAMERA: ${m === 'chase' ? 'GTA 6 CHASE CAM' : m === 'interior' ? '1ST-PERSON COCKPIT VIEW' : 'CLASSIC TOP-DOWN'}`;
+      this.radioToastTtl = 2.4;
     } else if (code === 'KeyR') {
-      const st = this.audio.cycleStation();
-      this.radioToast = RADIO_LABELS[st];
-      this.radioToastTtl = 3.0;
+      if (!this.playerVehicle && !this.currentInterior) {
+        this.player.startReload();
+        this.radioToast = 'RELOADING AK-47...';
+        this.radioToastTtl = 1.6;
+      } else {
+        const st = this.audio.cycleStation();
+        this.radioToast = RADIO_LABELS[st];
+        this.radioToastTtl = 3.0;
+      }
     } else if (code === 'KeyH' && this.playerVehicle) {
       this.audio.playHorn();
       this.peds.spookNear(this.playerVehicle.x, this.playerVehicle.z, 24);
-    } else if (code === 'KeyF' && this.playerVehicle) {
-      // Unstuck / Flip upright cleanly
+    } else if (code === 'KeyF' && this.playerVehicle && this.playerVehicle.stats.domain === 'land') {
       const safe = this.grid.getNearestRoadPoint(this.playerVehicle.x, this.playerVehicle.z);
       this.playerVehicle.x = safe.x;
       this.playerVehicle.z = safe.z;
@@ -426,12 +516,264 @@ export class GameEngine {
     this.keys.delete(e.code);
   };
 
+  // === UNIFIED REAL-WORLD INTERACTION ([E] KEY) ===
+  private getNearestInteraction(): {
+    prompt: string;
+    kind: HudSnapshot['interactKind'];
+    execute: () => void;
+  } | null {
+    // 1. Inside an Enterable Building Interior (Mall, Café, Office)
+    if (this.currentInterior) {
+      const hit = this.interiors.findNearestInteractable(
+        this.currentInterior,
+        this.player.x,
+        this.player.y,
+        this.player.z
+      );
+      if (!hit) return null;
+      return {
+        prompt: hit.label,
+        kind: hit.kind,
+        execute: () => {
+          if (hit.kind === 'interior_exit') {
+            this.exitInterior();
+          } else if (hit.kind === 'shop' && hit.venue) {
+            this.callbacks.onOpenShopVenue?.(hit.venue);
+          } else if (hit.kind === 'npc' && hit.npcLine) {
+            this.cash += 500;
+            this.audio.playCash();
+            this.events.emit('ui:dialogue', {
+              speaker: hit.npcSpeaker || 'TERMINAL',
+              role: 'INTERACTION • +$500 INTEL',
+              text: hit.npcLine,
+              accent: '#00f5ff',
+              ttl: 7.5,
+            });
+          }
+        },
+      };
+    }
+
+    // 2. Driving / Piloting a Vehicle -> [E] Exits cleanly!
+    if (this.playerVehicle) {
+      return {
+        prompt: `[E] EXIT ${this.playerVehicle.stats.name}`,
+        kind: 'vehicle',
+        execute: () => this.exitCurrentVehicle(),
+      };
+    }
+
+    // 3. On Foot Exterior: Check Enterable Building Portals first!
+    for (const ent of BUILDING_ENTRANCES) {
+      if (Math.hypot(this.player.x - ent.x, this.player.z - ent.z) < 5.5) {
+        return {
+          prompt: `[E] ENTER ${ent.name}`,
+          kind: 'interior_enter',
+          execute: () => this.enterInterior(ent.id, ent.x, ent.z),
+        };
+      }
+    }
+
+    // 4. Check NOVA (Sentient AI Character!)
+    if (Math.hypot(this.player.x - this.nova.x, this.player.z - this.nova.z) < 5.2) {
+      return {
+        prompt: `[E] TALK TO NOVA (SENTIENT AI • ${this.nova.mood.toUpperCase()})`,
+        kind: 'nova',
+        execute: () => this.callbacks.onOpenNovaChat?.(),
+      };
+    }
+
+    // 5. Check Nearby Vehicle / Speedboat / Helicopter to Board!
+    const nearVeh = this.findNearestHijackableVehicle();
+    if (nearVeh) {
+      const verb =
+        nearVeh.stats.domain === 'air'
+          ? 'PILOT'
+          : nearVeh.stats.domain === 'water'
+          ? 'BOARD'
+          : 'ENTER / HIJACK';
+      return {
+        prompt: `[E] ${verb} ${nearVeh.stats.name}`,
+        kind: 'vehicle',
+        execute: () => this.boardVehicle(nearVeh),
+      };
+    }
+
+    // 6. Check Street Vending Machines
+    for (const vm of this.cityBuilder.vendingMachines) {
+      if (Math.hypot(this.player.x - vm.x, this.player.z - vm.z) < 3.6) {
+        return {
+          prompt: vm.label,
+          kind: 'vending',
+          execute: () => this.buyShopItem('neon_cola', true),
+        };
+      }
+    }
+
+    // 7. Check Nearby Interactive City NPCs!
+    const npc = this.peds.findNearestNpc(this.player.x, this.player.z, 4.8);
+    if (npc) {
+      return {
+        prompt: `[E] TALK TO ${npc.name.toUpperCase()} (${npc.role})`,
+        kind: 'npc',
+        execute: () => {
+          const line = npc.lines[Math.floor(Math.random() * npc.lines.length)];
+          this.events.emit('ui:dialogue', {
+            speaker: npc.name.toUpperCase(),
+            role: npc.role.toUpperCase(),
+            text: line,
+            accent: '#fde047',
+            ttl: 6.5,
+          });
+        },
+      };
+    }
+
+    return null;
+  }
+
+  private handleContextInteract(): void {
+    const act = this.getNearestInteraction();
+    if (act) act.execute();
+  }
+
+  private enterInterior(id: InteriorId, doorX: number, doorZ: number): void {
+    this.exteriorReturnPos = {
+      x: doorX + (id === 'mall' ? -4 : id === 'cafe' ? 4 : 4),
+      y: Math.max(0.1, this.grid.getGroundHeight(doorX, doorZ)),
+      z: doorZ,
+      heading: this.player.heading,
+    };
+    this.currentInterior = id;
+    this.scopeToggle = false;
+    this.interiors.setActiveInterior(id);
+    const sp = this.interiors.getSpawnPoint(id);
+    this.player.teleport(sp.x, sp.y, sp.z, sp.heading);
+    this.player.setVisible(true);
+    this.cameraRig.yaw = 0;
+
+    const ent = BUILDING_ENTRANCES.find((b) => b.id === id);
+    this.events.emit('ui:banner', {
+      kind: 'district',
+      title: ent?.name ?? id.toUpperCase(),
+      subtitle: ent?.subtitle ?? 'INTERIOR SPACE',
+      duration: 2.8,
+    });
+    this.pushHudSnapshot();
+  }
+
+  public exitInterior(): void {
+    if (!this.currentInterior) return;
+    this.currentInterior = null;
+    this.interiors.setActiveInterior(null);
+    const ret = this.exteriorReturnPos ?? { x: 180, y: 0.1, z: 90, heading: Math.PI };
+    this.player.teleport(ret.x, ret.y, ret.z, ret.heading);
+    this.player.setVisible(true);
+    this.pushHudSnapshot();
+  }
+
+  // === SHOPPING, FOOD COURT & INVENTORY BAG ===
+  public buyShopItem(itemId: string, eatImmediately = false): boolean {
+    const item = SHOP_CATALOG.find((s) => s.id === itemId);
+    if (!item) return false;
+    if (this.cash < item.price) {
+      this.radioToast = `NOT ENOUGH CASH (NEED $${item.price})`;
+      this.radioToastTtl = 2.2;
+      return false;
+    }
+    this.cash -= item.price;
+    this.audio.playCash();
+
+    if (eatImmediately) {
+      this.consumeItemEffects(item);
+      this.radioToast = `ENJOYED ${item.name.toUpperCase()} (+${item.healHp} HP)`;
+      this.radioToastTtl = 2.6;
+    } else {
+      const existing = this.inventory.find((e) => e.item.id === item.id);
+      if (existing) existing.qty++;
+      else this.inventory.push({ item, qty: 1 });
+      this.radioToast = `STORED ${item.name.toUpperCase()} IN BAG [B]`;
+      this.radioToastTtl = 2.6;
+    }
+    this.pushHudSnapshot();
+    return true;
+  }
+
+  public useInventoryItem(itemId: string): boolean {
+    const idx = this.inventory.findIndex((e) => e.item.id === itemId);
+    if (idx === -1) return false;
+    const entry = this.inventory[idx];
+    this.consumeItemEffects(entry.item);
+    entry.qty--;
+    if (entry.qty <= 0) this.inventory.splice(idx, 1);
+    this.audio.playPayNSpray();
+    this.radioToast = `USED ${entry.item.name.toUpperCase()} (+${entry.item.healHp} HP)`;
+    this.radioToastTtl = 2.4;
+    this.pushHudSnapshot();
+    return true;
+  }
+
+  private consumeItemEffects(item: ShopCatalogItem): void {
+    this.player.heal(item.healHp);
+    if (this.playerVehicle) {
+      this.playerVehicle.hp = Math.min(this.playerVehicle.maxHp, this.playerVehicle.hp + item.healHp * 0.5);
+    }
+    if (item.nitroBoost) {
+      this.vehiclePhysics.nitroCharge = Math.min(100, this.vehiclePhysics.nitroCharge + item.nitroBoost);
+    }
+  }
+
+  // === SPOTIFY CONNECT SYNC ===
+  public setSpotifyStatus(active: boolean, title: string): void {
+    this.spotifyActive = active;
+    this.spotifyTitle = title;
+    this.audio.spotifyActive = active;
+    if (active) {
+      this.radioToast = `SPOTIFY CONNECT: ${title}`;
+      this.radioToastTtl = 2.8;
+    }
+    this.pushHudSnapshot();
+  }
+
+  // === SENTIENT AI (NOVA) CONTROLS ===
+  public setNovaApiConfig(key: string, model: string): void {
+    this.nova.setApiConfig(key, model);
+    this.pushHudSnapshot();
+  }
+
+  public async sendMessageToNova(text: string): Promise<void> {
+    const pos = this.getPlayerPos();
+    await this.nova.talkToNova(text, {
+      playerX: pos.x,
+      playerZ: pos.z,
+      playerDistrict: this.grid.getDistrictName(pos.x, pos.z),
+      playerHp: Math.round(this.player.hp),
+      wantedStars: this.wanted.stars,
+      cash: this.cash,
+      activeMission: this.missions.activeMissionId,
+      timeOfDay: this.sky.preset,
+      inVehicle: !!this.playerVehicle,
+      vehicleName: this.playerVehicle?.stats.name ?? 'On Foot',
+    });
+    this.pushHudSnapshot();
+  }
+
+  public summonNovaNearby(): void {
+    if (this.currentInterior) this.exitInterior();
+    const pos = this.getPlayerPos();
+    this.nova.teleportNearPlayer(pos.x, pos.z);
+    this.radioToast = 'NOVA IS RIGHT BESIDE YOU!';
+    this.radioToastTtl = 2.4;
+    this.pushHudSnapshot();
+  }
+
   // === PUBLIC UI COMMANDS ===
   public setUiBlocksInput(blocked: boolean): void {
     this.uiBlockInput = blocked;
     if (blocked) {
       this.keys.clear();
       this.mouseDown = false;
+      this.rightMouseDown = false;
     }
   }
 
@@ -453,7 +795,7 @@ export class GameEngine {
     this.events.emit('ui:dialogue', {
       speaker: 'ECHO',
       role: 'NET-RUNNER',
-      text: 'Welcome to Neon Coast! Drift with [Space], Nitro [Shift], Hijack any ride [E], open your Phone [Tab] to start the $100K Heist Campaign anytime!',
+      text: 'Welcome to Neon Coast! Press [C] for 1st-Person Cockpit + Spotify Dash, [E] to enter Mall/Café/Boats/Helicopters, or [N] to awaken NOVA!',
       accent: '#00f5ff',
       ttl: 8.5,
     });
@@ -468,6 +810,7 @@ export class GameEngine {
 
   public launchMission(id: string): void {
     this.audio.unlock();
+    if (this.currentInterior) this.exitInterior();
     this.activities.stopStreetRace();
     this.mode = 'playing';
     this.missions.startMission(id);
@@ -477,8 +820,9 @@ export class GameEngine {
   public launchStreetRace(id: string): void {
     const def = STREET_RACES.find((r) => r.id === id);
     if (!def) return;
+    if (this.currentInterior) this.exitInterior();
     this.missions.clearActiveMission();
-    if (!this.playerVehicle) {
+    if (!this.playerVehicle || this.playerVehicle.stats.domain !== 'land') {
       this.summonVehicle('hypercar');
     }
     this.activities.startStreetRace(def, this.playerVehicle);
@@ -506,7 +850,6 @@ export class GameEngine {
       const radius = 34 + this.upgrades.hackLevel * 10;
       const duration = 5.5 + this.upgrades.hackLevel * 1.2;
       const count = this.wanted.empStunAllPolice(pos.x, pos.z, radius, duration);
-      // Also stun nearby enemy mission vehicles!
       for (const mv of this.missions.missionVehicles) {
         if (!mv.destroyed && Math.hypot(mv.x - pos.x, mv.z - pos.z) <= radius) {
           mv.empStunTimer = duration;
@@ -567,23 +910,55 @@ export class GameEngine {
   }
 
   public summonVehicle(type: VehicleType, colorHex?: number): void {
-    const pos = this.getPlayerPos();
-    const road = this.grid.getNearestRoadPoint(pos.x, pos.z);
+    if (this.currentInterior) this.exitInterior();
     if (this.playerVehicle) {
+      if (this.playerVehicle.cockpit) this.playerVehicle.cockpit.group.visible = false;
       this.playerVehicle.driver = 'none';
     }
-    const v = createVehicleEntity(type, road.x, this.grid.getGroundHeight(road.x, road.z) + 0.1, road.z, road.heading, 'player', colorHex);
-    this.scene.add(v.mesh);
-    this.playerGarageVehicles.push(v);
-    if (this.playerGarageVehicles.length > 6) {
-      const old = this.playerGarageVehicles.shift()!;
-      if (old !== this.playerVehicle) this.scene.remove(old.mesh);
+    this.scopeToggle = false;
+
+    let sx: number;
+    let sy: number;
+    let sz: number;
+    let sh: number;
+    if (type === 'speedboat') {
+      const dock = BOAT_DOCK_POSITIONS[0];
+      sx = dock.x;
+      sy = -0.7;
+      sz = dock.z;
+      sh = dock.heading;
+    } else if (type === 'helicopter') {
+      const pad = HELIPAD_POSITIONS[0];
+      sx = pad.x;
+      sy = Math.max(0.2, this.grid.getGroundHeight(pad.x, pad.z) + 0.15);
+      sz = pad.z;
+      sh = pad.heading;
+    } else {
+      const pos = this.getPlayerPos();
+      const road = this.grid.getNearestRoadPoint(pos.x, pos.z);
+      sx = road.x;
+      sy = this.grid.getGroundHeight(road.x, road.z) + 0.1;
+      sz = road.z;
+      sh = road.heading;
     }
+
+    const v = createVehicleEntity(type, sx, sy, sz, sh, 'player', colorHex);
+    this.scene.add(v.mesh);
+    if (type === 'speedboat') this.worldBoats.push(v);
+    else if (type === 'helicopter') this.worldHelicopters.push(v);
+    else {
+      this.playerGarageVehicles.push(v);
+      if (this.playerGarageVehicles.length > 6) {
+        const old = this.playerGarageVehicles.shift()!;
+        if (old !== this.playerVehicle) this.scene.remove(old.mesh);
+      }
+    }
+
     this.playerVehicle = v;
     this.player.setVisible(false);
     this.vfx.spawnPayNSprayBurst(v.x, v.y, v.z, v.colorHex);
     this.audio.playPayNSpray();
-    this.radioToast = `GARAGE DELIVERED: ${v.stats.name}`;
+    this.radioToast = `DELIVERED: ${v.stats.name}`;
     this.radioToastTtl = 2.8;
     this.pushHudSnapshot();
   }
@@ -635,17 +1010,27 @@ export class GameEngine {
     this.pushHudSnapshot();
   }
 
-  public demoTeleport(loc: 'ocean' | 'downtown' | 'docks' | 'causeway' | 'pier'): void {
-    const spots: Record<typeof loc, { x: number; z: number; h: number }> = {
+  public demoTeleport(
+    loc: 'ocean' | 'downtown' | 'docks' | 'causeway' | 'pier' | 'mall' | 'cafe' | 'helipad' | 'marina'
+  ): void {
+    if (this.currentInterior) this.exitInterior();
+    const spots: Record<typeof loc, { x: number; z: number; h: number; exitCar?: boolean }> = {
       ocean: { x: 180, z: 60, h: Math.PI },
       downtown: { x: 0, z: 12, h: Math.PI },
       docks: { x: PAY_N_SPRAY_POS.x + 28, z: PAY_N_SPRAY_POS.z, h: -Math.PI / 2 },
       causeway: { x: VAULT_PLAZA_POS.x + 30, z: VAULT_PLAZA_POS.z + 20, h: -Math.PI * 0.75 },
       pier: { x: 222, z: 0, h: Math.PI / 2 },
+      mall: { x: 8, z: 42, h: Math.PI / 2, exitCar: true },
+      cafe: { x: 173, z: 45, h: -Math.PI / 2, exitCar: true },
+      helipad: { x: 158, z: 135, h: -Math.PI / 2, exitCar: true },
+      marina: { x: 237, z: 16, h: Math.PI / 2, exitCar: true },
     };
     const s = spots[loc];
-    const y = this.grid.getGroundHeight(s.x, s.z) + 0.3;
-    if (this.playerVehicle) {
+    if (s.exitCar && this.playerVehicle) {
+      this.exitCurrentVehicle();
+    }
+    const y = Math.max(0.15, this.grid.getGroundHeight(s.x, s.z) + 0.2);
+    if (this.playerVehicle && this.playerVehicle.stats.domain === 'land') {
       this.playerVehicle.x = s.x;
       this.playerVehicle.y = y;
       this.playerVehicle.z = s.z;
@@ -655,20 +1040,22 @@ export class GameEngine {
       this.playerVehicle.heading = s.h;
     } else {
       this.player.teleport(s.x, y, s.z, s.h);
+      this.player.setVisible(true);
     }
     this.pushHudSnapshot();
   }
 
-  // === VEHICLE HIJACK / EXIT ===
+  // === VEHICLE BOARDING / EXIT ===
   private findNearestHijackableVehicle(): VehicleEntity | null {
     if (this.playerVehicle) return null;
     const all = this.getAllVehicles();
     let best: VehicleEntity | null = null;
-    let bestD = 6.2;
+    let bestD = 9.5; // Generous reach so boarding moored speedboats from the pier/beach feels seamless!
     for (const v of all) {
       if (v.destroyed) continue;
+      const limit = v.stats.domain === 'water' ? 9.5 : v.stats.domain === 'air' ? 8.2 : 6.2;
       const d = Math.hypot(v.x - this.player.x, v.z - this.player.z);
-      if (d < bestD) {
+      if (d < limit && d < bestD) {
         bestD = d;
         best = v;
       }
@@ -676,45 +1063,68 @@ export class GameEngine {
     return best;
   }
 
-  private toggleVehicleEnterExit(): void {
-    if (this.playerVehicle) {
-      // Exit vehicle cleanly onto left curb side
-      const v = this.playerVehicle;
-      const exitX = v.x - Math.cos(v.heading) * (v.stats.width * 0.5 + 1.35);
-      const exitZ = v.z + Math.sin(v.heading) * (v.stats.width * 0.5 + 1.35);
-      v.driver = 'none';
-      this.playerVehicle = null;
-      this.player.teleport(exitX, Math.max(0, this.grid.getGroundHeight(exitX, exitZ)), exitZ, v.heading);
-      this.player.setVisible(true);
-      this.cameraRig.yaw = v.heading + Math.PI;
+  private exitCurrentVehicle(): void {
+    const v = this.playerVehicle;
+    if (!v) return;
+    if (v.stats.domain === 'air' && v.y > this.grid.getGroundHeight(v.x, v.z) + 4.5) {
+      this.radioToast = 'DESCEND WITH [X / CTRL] TO LAND BEFORE EXITING CHOPPER!';
+      this.radioToastTtl = 2.6;
+      return;
+    }
+    if (v.cockpit) v.cockpit.group.visible = false;
+
+    let exitX = v.x - Math.cos(v.heading) * (v.stats.width * 0.5 + 1.45);
+    let exitZ = v.z + Math.sin(v.heading) * (v.stats.width * 0.5 + 1.45);
+    if (v.stats.domain === 'water') {
+      // Disembark cleanly onto Ocean Pier / Shore beach!
+      const safe = this.grid.isWater(exitX, exitZ) ? { x: 236, z: Math.max(-180, Math.min(180, v.z)) } : { x: exitX, z: exitZ };
+      exitX = safe.x;
+      exitZ = safe.z;
+    }
+
+    v.driver = 'none';
+    this.playerVehicle = null;
+    this.player.teleport(exitX, Math.max(0.05, this.grid.getGroundHeight(exitX, exitZ)), exitZ, v.heading);
+    this.player.setVisible(true);
+    this.cameraRig.yaw = v.heading + Math.PI;
+    if (this.cameraRig.mode === 'interior') this.cameraRig.mode = 'chase';
+  }
+
+  private boardVehicle(target: VehicleEntity): void {
+    const wasPolice = target.driver === 'police';
+    const wasCivilian = target.driver === 'traffic';
+    if (wasCivilian) {
+      this.traffic.vehicles = this.traffic.vehicles.filter((c) => c !== target);
+      this.playerGarageVehicles.push(target);
+      this.events.emit('wanted:crime', { severity: 0.75, reason: 'Grand Theft Auto', x: target.x, z: target.z });
+    } else if (wasPolice) {
+      this.wanted.policeVehicles = this.wanted.policeVehicles.filter((c) => c !== target);
+      this.playerGarageVehicles.push(target);
+      this.events.emit('wanted:crime', { severity: 1.5, reason: 'Hijacked NCPD Cruiser', x: target.x, z: target.z });
+    }
+    target.driver = 'player';
+    target.empStunTimer = 0;
+    this.scopeToggle = false;
+    this.playerVehicle = target;
+    this.player.setVisible(false);
+    this.audio.playCash();
+
+    if (target.stats.domain === 'air') {
+      this.radioToast = 'SKYHAWK CHOPPER: [SPACE] CLIMB • [X/CTRL] DESCEND • [WASD] FLY';
+      this.radioToastTtl = 4.5;
+    } else if (target.stats.domain === 'water') {
+      this.radioToast = 'NEON SPEEDBOAT: [WASD] NAVIGATE OCEAN & BAY • [SHIFT] JET BOOST';
+      this.radioToastTtl = 4.0;
     } else {
-      const target = this.findNearestHijackableVehicle();
-      if (!target) return;
-      const wasPolice = target.driver === 'police';
-      const wasCivilian = target.driver === 'traffic';
-      // Pull from traffic/police lists so it belongs to the player cleanly!
-      if (wasCivilian) {
-        this.traffic.vehicles = this.traffic.vehicles.filter((c) => c !== target);
-        this.playerGarageVehicles.push(target);
-        this.events.emit('wanted:crime', { severity: 0.75, reason: 'Grand Theft Auto', x: target.x, z: target.z });
-      } else if (wasPolice) {
-        this.wanted.policeVehicles = this.wanted.policeVehicles.filter((c) => c !== target);
-        this.playerGarageVehicles.push(target);
-        this.events.emit('wanted:crime', { severity: 1.5, reason: 'Hijacked NCPD Cruiser', x: target.x, z: target.z });
-      }
-      target.driver = 'player';
-      target.empStunTimer = 0;
-      this.playerVehicle = target;
-      this.player.setVisible(false);
-      this.audio.playCash();
-      this.radioToast = `ENTERED: ${target.stats.name}`;
-      this.radioToastTtl = 2.0;
+      this.radioToast = `ENTERED: ${target.stats.name} • PRESS [C] FOR 1ST-PERSON COCKPIT`;
+      this.radioToastTtl = 2.8;
     }
   }
 
   private triggerWasted(): void {
     this.mode = 'wasted';
     this.deathRecoverTimer = 3.2;
+    this.scopeToggle = false;
     this.missions.clearActiveMission();
     this.activities.stopStreetRace();
     this.wanted.setStars(0);
@@ -730,6 +1140,7 @@ export class GameEngine {
   private triggerBusted(): void {
     this.mode = 'busted';
     this.deathRecoverTimer = 3.2;
+    this.scopeToggle = false;
     this.missions.clearActiveMission();
     this.activities.stopStreetRace();
     this.wanted.setStars(0);
@@ -748,7 +1159,7 @@ export class GameEngine {
     this.mode = 'playing';
     this.banner = null;
     this.player.hp = this.player.maxHp;
-    if (this.playerVehicle && !this.playerVehicle.destroyed) {
+    if (this.playerVehicle && !this.playerVehicle.destroyed && this.playerVehicle.stats.domain === 'land') {
       this.playerVehicle.hp = this.playerVehicle.maxHp;
       this.playerVehicle.x = pt.x;
       this.playerVehicle.z = pt.z;
@@ -769,6 +1180,8 @@ export class GameEngine {
   private getAllVehicles(): VehicleEntity[] {
     const arr: VehicleEntity[] = [
       ...this.playerGarageVehicles,
+      ...this.worldBoats,
+      ...this.worldHelicopters,
       ...this.traffic.vehicles,
       ...this.wanted.policeVehicles,
       ...this.missions.missionVehicles,
@@ -809,7 +1222,6 @@ export class GameEngine {
     const rawDt = Math.min(0.05, Math.max(0.001, (now - this.lastTime) / 1000));
     this.lastTime = now;
 
-    // FPS counter
     this.fpsFrames++;
     this.fpsAccum += rawDt;
     if (this.fpsAccum >= 0.5) {
@@ -818,14 +1230,12 @@ export class GameEngine {
       this.fpsAccum = 0;
     }
 
-    // Hitstop freeze frame for juicy heavy impacts!
     if (this.hitstopTimer > 0) {
       this.hitstopTimer -= rawDt;
       this.composer.render();
       return;
     }
 
-    // Slow-mo scaling during Epic Stunt Jumps or Wasted/Busted!
     let timeScale = 1.0;
     if (this.vehiclePhysics.activeStuntSlowMo > 0) {
       this.vehiclePhysics.activeStuntSlowMo = Math.max(0, this.vehiclePhysics.activeStuntSlowMo - rawDt);
@@ -834,15 +1244,12 @@ export class GameEngine {
     if (this.mode === 'wasted' || this.mode === 'busted') {
       timeScale = 0.25;
       this.deathRecoverTimer -= rawDt;
-      if (this.deathRecoverTimer <= 0) {
-        this.respawnAfterDown(this.mode === 'busted');
-      }
+      if (this.deathRecoverTimer <= 0) this.respawnAfterDown(this.mode === 'busted');
     }
 
     const dt = rawDt * timeScale;
     this.elapsed += dt;
 
-    // Tick cooldowns & UI timers
     if (this.hackCdTraffic > 0) this.hackCdTraffic = Math.max(0, this.hackCdTraffic - rawDt);
     if (this.hackCdEmp > 0) this.hackCdEmp = Math.max(0, this.hackCdEmp - rawDt);
     if (this.hackCdSpoof > 0) this.hackCdSpoof = Math.max(0, this.hackCdSpoof - rawDt);
@@ -861,16 +1268,15 @@ export class GameEngine {
       if (this.banner.duration <= 0) this.banner = null;
     }
 
-    // Update World Lights, Traffic Lights, Landmarks & Props
     this.grid.updateTrafficLights(dt);
     const pPos = this.getPlayerPos();
-    this.sky.update(dt, this.elapsed, pPos.x, pPos.z);
+    this.sky.update(dt, this.elapsed, this.currentInterior ? 0 : pPos.x, this.currentInterior ? 0 : pPos.z);
     this.cityBuilder.update(dt, this.elapsed, this.sky.nightFactor);
+    this.interiors.update(dt, this.elapsed);
 
     const allVehicles = this.getAllVehicles();
 
     if (this.mode === 'title') {
-      // Live animated city behind title screen!
       for (const tv of this.traffic.vehicles) {
         const inp = this.traffic.computeInput(tv, dt, allVehicles, 9999, 9999);
         this.vehiclePhysics.stepVehicle(tv, inp, dt, this.upgrades, this.cityBuilder.destructibles, allVehicles, this.elapsed);
@@ -881,9 +1287,9 @@ export class GameEngine {
       return;
     }
 
-    // === ACTIVE GAMEPLAY ===
+    const isAiming = !this.playerVehicle && !this.currentInterior && (this.rightMouseDown || this.scopeToggle);
+
     if (this.mode === 'playing') {
-      // 1. Player Control (In-Vehicle or On-Foot)
       if (this.playerVehicle) {
         const pv = this.playerVehicle;
         const throttle = this.uiBlockInput
@@ -896,10 +1302,15 @@ export class GameEngine {
             (this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : 0);
         const handbrake = !this.uiBlockInput && this.keys.has('Space');
         const nitro = !this.uiBlockInput && (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'));
+        const ascend =
+          pv.stats.domain === 'air' && !this.uiBlockInput
+            ? (this.keys.has('Space') || this.keys.has('ShiftLeft') ? 1 : 0) -
+              (this.keys.has('ControlLeft') || this.keys.has('KeyX') ? 1 : 0)
+            : 0;
 
         this.vehiclePhysics.stepVehicle(
           pv,
-          { throttle, steer, handbrake, nitro },
+          { throttle, steer, handbrake, nitro, ascend },
           dt,
           this.upgrades,
           this.cityBuilder.destructibles,
@@ -907,27 +1318,40 @@ export class GameEngine {
           this.elapsed
         );
 
-        // Drive-By Plasma Blaster (`Q` or Left-Click) so car chases feel explosive!
+        // Live 3D First-Person Dashboard Redraw (~15 Hz when in interior view!)
+        this.dashRedrawAccum += rawDt;
+        if (this.cameraRig.mode === 'interior' && this.dashRedrawAccum >= 0.065) {
+          this.dashRedrawAccum = 0;
+          updateCockpitDashboard(
+            pv,
+            this.computeGearLabel(pv),
+            this.vehiclePhysics.nitroCharge,
+            this.spotifyActive ? this.spotifyTitle : RADIO_LABELS[this.audio.station],
+            this.spotifyActive
+          );
+        }
+
+        // Drive-By AK-47 / Chopper Tactical Cannon (`Q` or Left-Click)
         const firing = !this.uiBlockInput && (this.keys.has('KeyQ') || this.mouseDown);
         if (firing && this.driveByCooldown <= 0) {
-          this.driveByCooldown = Math.max(0.14, 0.28 - this.upgrades.blasterLevel * 0.04);
+          this.driveByCooldown = Math.max(0.11, 0.22 - this.upgrades.blasterLevel * 0.03);
           const fx = Math.sin(pv.heading);
           const fz = Math.cos(pv.heading);
           this.combat.firePlayerBolt(
-            pv.x + fx * 2.4,
+            pv.x + fx * 2.5,
             pv.y + 1.25,
-            pv.z + fz * 2.4,
+            pv.z + fz * 2.5,
             fx,
-            0,
+            pv.stats.domain === 'air' ? -0.18 : 0,
             fz,
             this.upgrades,
             allVehicles,
-            this.cityBuilder.destructibles
+            this.cityBuilder.destructibles,
+            false
           );
-          this.audio.playBlaster();
+          this.audio.playBlaster(false);
         }
 
-        // Check if player vehicle exploded!
         if (pv.hp <= 0 && !pv.destroyed) {
           pv.destroyed = true;
           this.vfx.spawnExplosion(pv.x, pv.y + 1, pv.z, 1.8);
@@ -944,6 +1368,14 @@ export class GameEngine {
           : (this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : 0) -
             (this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? 1 : 0);
 
+        // Apply automatic Mall Escalator glide when standing on moving steps!
+        if (this.currentInterior) {
+          const escPush = this.interiors.getEscalatorPushZ(this.currentInterior, this.player.x, this.player.z);
+          if (escPush !== 0) {
+            this.player.z += escPush * dt;
+          }
+        }
+
         this.player.update(
           dt,
           {
@@ -952,81 +1384,127 @@ export class GameEngine {
             sprint: !this.uiBlockInput && (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')),
             jump: !this.uiBlockInput && this.keys.has('Space'),
             fire: !this.uiBlockInput && (this.keys.has('KeyQ') || this.mouseDown),
+            aiming: isAiming,
           },
           this.cameraRig.yaw,
+          this.cameraRig.pitch,
           this.upgrades,
-          (ox, oy, oz, dx, dy, dz) => {
-            this.combat.firePlayerBolt(ox, oy, oz, dx, dy, dz, this.upgrades, allVehicles, this.cityBuilder.destructibles);
-            this.peds.spookNear(ox, oz, 30);
+          !!this.currentInterior,
+          this.currentInterior ? (x, z) => this.interiors.getGroundHeight(this.currentInterior!, x, z) : null,
+          this.currentInterior ? (x, z) => this.interiors.clampPosition(this.currentInterior!, x, z) : null,
+          (ox, oy, oz, dx, dy, dz, scoped) => {
+            this.combat.firePlayerBolt(
+              ox,
+              oy,
+              oz,
+              dx,
+              dy,
+              dz,
+              this.upgrades,
+              allVehicles,
+              this.cityBuilder.destructibles,
+              scoped
+            );
+            this.cameraRig.addShake(scoped ? 0.08 : 0.14);
+            this.peds.spookNear(ox, oz, 32);
           }
         );
       }
 
       const posNow = this.getPlayerPos();
 
-      // 2. Step AI Traffic
-      for (const tv of this.traffic.vehicles) {
-        if (tv.destroyed) continue;
-        const inp = this.traffic.computeInput(tv, dt, allVehicles, posNow.x, posNow.z);
-        this.vehiclePhysics.stepVehicle(tv, inp, dt, this.upgrades, this.cityBuilder.destructibles, allVehicles, this.elapsed);
+      // Idle boat bobbing & parked helicopter slow idle rotor spin
+      for (const b of this.worldBoats) {
+        if (b !== this.playerVehicle) {
+          this.vehiclePhysics.stepVehicle(b, { throttle: 0, steer: 0, handbrake: false, nitro: false }, dt, this.upgrades, [], allVehicles, this.elapsed);
+        }
+      }
+      for (const h of this.worldHelicopters) {
+        if (h !== this.playerVehicle) {
+          this.vehiclePhysics.stepVehicle(h, { throttle: 0, steer: 0, handbrake: false, nitro: false, ascend: 0 }, dt, this.upgrades, [], allVehicles, this.elapsed);
+        }
       }
 
-      // 3. Step Police Pursuit AI + Wanted System
-      this.wanted.update(dt, this.elapsed, posNow.x, posNow.z, posNow.speed, posNow.heading, () => this.triggerBusted());
-      for (const cop of this.wanted.policeVehicles) {
-        if (cop.destroyed) continue;
-        const inp = this.wanted.computeCopInput(cop, posNow.x, posNow.z, posNow.vx, posNow.vz);
-        this.vehiclePhysics.stepVehicle(cop, inp, dt, this.upgrades, this.cityBuilder.destructibles, allVehicles, this.elapsed);
-      }
+      // Skip exterior traffic/police ticking only if desired; keeping alive ensures seamless exits!
+      if (!this.currentInterior) {
+        for (const tv of this.traffic.vehicles) {
+          if (tv.destroyed) continue;
+          const inp = this.traffic.computeInput(tv, dt, allVehicles, posNow.x, posNow.z);
+          this.vehiclePhysics.stepVehicle(tv, inp, dt, this.upgrades, this.cityBuilder.destructibles, allVehicles, this.elapsed);
+        }
 
-      // 4. Step Mission Vehicles & Rival Racers & Cash Van
-      for (const mv of this.missions.missionVehicles) {
-        if (mv.destroyed || mv.driver === 'player' || mv.driver === 'none') continue;
-        const inp = this.missions.computeMissionVehicleInput(mv, posNow.x, posNow.z);
-        this.vehiclePhysics.stepVehicle(mv, inp, dt, this.upgrades, this.cityBuilder.destructibles, allVehicles, this.elapsed);
-      }
-      for (let i = 0; i < this.activities.raceRivals.length; i++) {
-        const rv = this.activities.raceRivals[i];
-        const inp = this.activities.computeRivalInput(i);
-        this.vehiclePhysics.stepVehicle(rv, inp, dt, this.upgrades, this.cityBuilder.destructibles, allVehicles, this.elapsed);
-      }
-      if (this.activities.cashVan && !this.activities.cashVan.destroyed) {
-        const inp = this.traffic.computeInput(this.activities.cashVan, dt, allVehicles, posNow.x, posNow.z);
-        this.vehiclePhysics.stepVehicle(this.activities.cashVan, inp, dt, this.upgrades, this.cityBuilder.destructibles, allVehicles, this.elapsed);
-      }
+        this.wanted.update(dt, this.elapsed, posNow.x, posNow.z, posNow.speed, posNow.heading, () => this.triggerBusted());
+        for (const cop of this.wanted.policeVehicles) {
+          if (cop.destroyed) continue;
+          const inp = this.wanted.computeCopInput(cop, posNow.x, posNow.z, posNow.vx, posNow.vz);
+          this.vehiclePhysics.stepVehicle(cop, inp, dt, this.upgrades, this.cityBuilder.destructibles, allVehicles, this.elapsed);
+        }
 
-      // 5. Pedestrians, Combat, World Activities & Campaign Missions
-      this.peds.update(dt, posNow.x, posNow.z, Math.abs(posNow.speed));
-      this.combat.update(
-        dt,
-        this.elapsed,
-        posNow.x,
-        posNow.y,
-        posNow.z,
-        !!this.playerVehicle,
-        this.playerVehicle,
-        allVehicles,
-        this.cityBuilder.destructibles
-      );
-      this.activities.update(dt, this.elapsed, posNow.x, posNow.z, this.playerVehicle, !!this.missions.activeMissionId);
-      this.missions.update(dt, this.elapsed, posNow.x, posNow.y, posNow.z, this.playerVehicle);
+        for (const mv of this.missions.missionVehicles) {
+          if (mv.destroyed || mv.driver === 'player' || mv.driver === 'none') continue;
+          const inp = this.missions.computeMissionVehicleInput(mv, posNow.x, posNow.z);
+          this.vehiclePhysics.stepVehicle(mv, inp, dt, this.upgrades, this.cityBuilder.destructibles, allVehicles, this.elapsed);
+        }
 
-      // 6. District Crossing Banner!
-      const dId = this.grid.getDistrict(posNow.x, posNow.z);
-      if (dId !== this.currentDistrict) {
-        this.currentDistrict = dId;
-        if (!this.banner) {
-          this.banner = {
-            kind: 'district',
-            title: this.grid.getDistrictName(posNow.x, posNow.z),
-            subtitle: 'NEON COAST SECTOR',
-            duration: 2.3,
-          };
+        for (let i = 0; i < this.activities.raceRivals.length; i++) {
+          const rv = this.activities.raceRivals[i];
+          const inp = this.activities.computeRivalInput(i, dt);
+          this.vehiclePhysics.stepVehicle(rv, inp, dt, this.upgrades, this.cityBuilder.destructibles, allVehicles, this.elapsed);
+        }
+
+        if (this.activities.cashVan && !this.activities.cashVan.destroyed) {
+          const inp = this.traffic.computeInput(this.activities.cashVan, dt, allVehicles, posNow.x, posNow.z);
+          this.vehiclePhysics.stepVehicle(this.activities.cashVan, inp, dt, this.upgrades, this.cityBuilder.destructibles, allVehicles, this.elapsed);
+        }
+
+        this.peds.update(dt, posNow.x, posNow.z, Math.abs(posNow.speed));
+        this.nova.update(dt, this.elapsed, {
+          playerX: posNow.x,
+          playerZ: posNow.z,
+          playerDistrict: this.grid.getDistrictName(posNow.x, posNow.z),
+          playerHp: Math.round(this.player.hp),
+          wantedStars: this.wanted.stars,
+          cash: this.cash,
+          activeMission: this.missions.activeMissionId,
+          timeOfDay: this.sky.preset,
+          inVehicle: !!this.playerVehicle,
+          vehicleName: this.playerVehicle?.stats.name ?? 'On Foot',
+        });
+
+        this.combat.update(
+          dt,
+          this.elapsed,
+          posNow.x,
+          posNow.y,
+          posNow.z,
+          !!this.playerVehicle,
+          this.playerVehicle,
+          allVehicles,
+          this.cityBuilder.destructibles
+        );
+        this.activities.update(dt, this.elapsed, posNow.x, posNow.z, this.playerVehicle, !!this.missions.activeMissionId);
+        this.missions.update(dt, this.elapsed, posNow.x, posNow.y, posNow.z, this.playerVehicle);
+
+        // Update sleek 3D Road GPS Navigation Ribbon!
+        const gpsTarget = this.getActiveGpsTarget();
+        const gpsPath = gpsTarget ? this.grid.computeGpsPath({ x: posNow.x, z: posNow.z }, gpsTarget.pos) : [];
+        this.missions.updateGpsRibbon(gpsPath, this.elapsed, !!this.activities.activeRace);
+
+        const dId = this.grid.getDistrict(posNow.x, posNow.z);
+        if (dId !== this.currentDistrict) {
+          this.currentDistrict = dId;
+          if (!this.banner) {
+            this.banner = {
+              kind: 'district',
+              title: this.grid.getDistrictName(posNow.x, posNow.z),
+              subtitle: 'NEON COAST SECTOR',
+              duration: 2.3,
+            };
+          }
         }
       }
     }
 
-    // 7. Particles, Camera & Audio
     this.vfx.update(dt);
     const camTarget = this.getPlayerPos();
     this.cameraRig.updateGameplay(
@@ -1036,9 +1514,10 @@ export class GameEngine {
       camTarget.z,
       camTarget.heading,
       camTarget.speed,
-      !!this.playerVehicle,
-      !!this.playerVehicle?.nitroActive,
-      this.vehiclePhysics.activeStuntSlowMo
+      this.playerVehicle,
+      isAiming,
+      this.vehiclePhysics.activeStuntSlowMo,
+      !!this.currentInterior
     );
 
     this.audio.update(
@@ -1047,13 +1526,12 @@ export class GameEngine {
       Math.abs(camTarget.speed),
       !!this.playerVehicle?.nitroActive,
       this.playerVehicle?.driftIntensity ?? 0,
-      this.wanted.getClosestSirenDistance(camTarget.x, camTarget.z),
+      this.currentInterior ? 999 : this.wanted.getClosestSirenDistance(camTarget.x, camTarget.z),
       this.mode === 'playing'
     );
 
     this.composer.render();
 
-    // Throttled 20 Hz UI HUD Snapshot
     this.uiPushAccum += rawDt;
     if (this.uiPushAccum >= 0.05) {
       this.uiPushAccum = 0;
@@ -1061,83 +1539,126 @@ export class GameEngine {
     }
   };
 
+  private computeGearLabel(v: VehicleEntity | null): string {
+    if (!v) return 'N';
+    if (v.stats.domain === 'air') return v.grounded ? 'IDLE' : 'FLT';
+    if (v.stats.domain === 'water') return v.speed < -0.5 ? 'REV' : 'JET';
+    if (v.speed < -0.8) return 'R';
+    const mph = Math.round(Math.abs(v.speed) * 2.75);
+    if (mph < 26) return '1';
+    if (mph < 52) return '2';
+    if (mph < 82) return '3';
+    if (mph < 114) return '4';
+    if (mph < 146) return '5';
+    return '6';
+  }
+
+  private getActiveGpsTarget(): { pos: Vec2; label: string } | null {
+    if (this.activities.activeRace) {
+      const cp = this.activities.activeRace.checkpoints[this.activities.activeRaceCpIndex];
+      if (cp) return { pos: cp, label: this.activities.activeRace.name };
+    }
+    const step = this.missions.getStepView();
+    if (step?.targetPos) return { pos: step.targetPos, label: step.title };
+    if (this.customWaypoint) return { pos: this.customWaypoint, label: 'CUSTOM GPS PIN' };
+    return null;
+  }
+
+  private computeGpsNavInfo(pos: { x: number; z: number; heading: number }, gpsPath: Vec2[], label: string): GpsNavInfo {
+    if (gpsPath.length < 2) {
+      return {
+        active: false,
+        destinationLabel: '',
+        distanceMeters: 0,
+        bearingDiffDeg: 0,
+        turnHint: 'STRAIGHT',
+      };
+    }
+    const finalPt = gpsPath[gpsPath.length - 1];
+    const totalDist = Math.round(Math.hypot(finalPt.x - pos.x, finalPt.z - pos.z));
+    // Look at next road node ~18m+ ahead for smart turn-by-turn hint!
+    let nextPt = gpsPath[1];
+    for (let i = 1; i < gpsPath.length; i++) {
+      if (Math.hypot(gpsPath[i].x - pos.x, gpsPath[i].z - pos.z) > 16) {
+        nextPt = gpsPath[i];
+        break;
+      }
+    }
+    const targetBearing = Math.atan2(nextPt.x - pos.x, nextPt.z - pos.z);
+    let diff = targetBearing - pos.heading;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    // Note: in our coord frame, heading +1 turns LEFT (+X to -Z), so -diff is RIGHT!
+    const degRight = (-diff * 180) / Math.PI;
+
+    let turnHint: GpsNavInfo['turnHint'] = 'STRAIGHT';
+    if (totalDist < 22) turnHint = 'ARRIVING';
+    else if (Math.abs(degRight) > 135) turnHint = 'U-TURN';
+    else if (degRight > 45) turnHint = 'TURN RIGHT';
+    else if (degRight > 18) turnHint = 'SLIGHT RIGHT';
+    else if (degRight < -45) turnHint = 'TURN LEFT';
+    else if (degRight < -18) turnHint = 'SLIGHT LEFT';
+
+    return {
+      active: true,
+      destinationLabel: label,
+      distanceMeters: totalDist,
+      bearingDiffDeg: degRight,
+      turnHint,
+    };
+  }
+
   private pushHudSnapshot(): void {
     const pos = this.getPlayerPos();
     const speedMph = Math.round(Math.abs(pos.speed) * 2.75);
-    const gear = !this.playerVehicle
-      ? 'N'
-      : pos.speed < -0.8
-      ? 'R'
-      : speedMph < 22
-      ? '1'
-      : speedMph < 48
-      ? '2'
-      : speedMph < 78
-      ? '3'
-      : speedMph < 112
-      ? '4'
-      : '5';
+    const gear = this.computeGearLabel(this.playerVehicle);
+    const isAiming = !this.playerVehicle && !this.currentInterior && (this.rightMouseDown || this.scopeToggle);
 
-    // Assemble Minimap Blips
     const blips: MinimapBlip[] = [];
     blips.push({ x: PAY_N_SPRAY_POS.x, z: PAY_N_SPRAY_POS.z, kind: 'paynspray' });
-    for (const g of this.activities.raceGates) {
-      blips.push({ x: g.def.startX, z: g.def.startZ, kind: 'race' });
+    for (const ent of BUILDING_ENTRANCES) {
+      blips.push({ x: ent.x, z: ent.z, kind: 'interior' });
     }
-    for (const c of this.activities.collectibles) {
-      if (!c.collected) blips.push({ x: c.x, z: c.z, kind: 'cassette' });
+    for (const b of this.worldBoats) {
+      blips.push({ x: b.x, z: b.z, kind: 'boat' });
     }
-    for (const tv of this.traffic.vehicles) {
-      if (!tv.destroyed) blips.push({ x: tv.x, z: tv.z, kind: 'traffic' });
+    for (const h of this.worldHelicopters) {
+      blips.push({ x: h.x, z: h.z, kind: 'fly_heli' });
     }
-    for (const cop of this.wanted.policeVehicles) {
-      if (!cop.destroyed) blips.push({ x: cop.x, z: cop.z, kind: 'police' });
-    }
-    if (this.wanted.heliActive) {
-      blips.push({ x: this.wanted.heliX, z: this.wanted.heliZ, kind: 'heli' });
-    }
-    for (const e of this.combat.enemies) {
-      if (e.alive) blips.push({ x: e.x, z: e.z, kind: 'enemy' });
-    }
-    for (const mv of this.missions.missionVehicles) {
-      if (!mv.destroyed && mv.driver !== 'player') blips.push({ x: mv.x, z: mv.z, kind: 'mission' });
-    }
-    if (this.activities.cashVan && !this.activities.cashVan.destroyed) {
-      blips.push({ x: this.activities.cashVan.x, z: this.activities.cashVan.z, kind: 'event' });
-    }
-    if (this.customWaypoint) {
-      blips.push({ x: this.customWaypoint.x, z: this.customWaypoint.z, kind: 'waypoint' });
-    }
+    blips.push({ x: this.nova.x, z: this.nova.z, kind: 'nova' });
 
-    // Active GPS route priority: Active Race -> Active Mission -> Custom Waypoint
+    for (const g of this.activities.raceGates) blips.push({ x: g.def.startX, z: g.def.startZ, kind: 'race' });
+    for (const c of this.activities.collectibles) if (!c.collected) blips.push({ x: c.x, z: c.z, kind: 'cassette' });
+    for (const tv of this.traffic.vehicles) if (!tv.destroyed) blips.push({ x: tv.x, z: tv.z, kind: 'traffic' });
+    for (const cop of this.wanted.policeVehicles) if (!cop.destroyed) blips.push({ x: cop.x, z: cop.z, kind: 'police' });
+    if (this.wanted.heliActive) blips.push({ x: this.wanted.heliX, z: this.wanted.heliZ, kind: 'heli' });
+    for (const e of this.combat.enemies) if (e.alive) blips.push({ x: e.x, z: e.z, kind: 'enemy' });
+    for (const mv of this.missions.missionVehicles) if (!mv.destroyed && mv.driver !== 'player') blips.push({ x: mv.x, z: mv.z, kind: 'mission' });
+    if (this.activities.cashVan && !this.activities.cashVan.destroyed) blips.push({ x: this.activities.cashVan.x, z: this.activities.cashVan.z, kind: 'event' });
+    if (this.customWaypoint) blips.push({ x: this.customWaypoint.x, z: this.customWaypoint.z, kind: 'waypoint' });
+
     const step = this.missions.getStepView();
-    let gpsTarget: Vec2 | null = null;
-    if (this.activities.activeRace) {
-      const cp = this.activities.activeRace.checkpoints[this.activities.activeRaceCpIndex];
-      if (cp) {
-        gpsTarget = cp;
-        blips.push({ x: cp.x, z: cp.z, kind: 'race' });
-      }
-    } else if (step?.targetPos) {
-      gpsTarget = step.targetPos;
-      blips.push({ x: step.targetPos.x, z: step.targetPos.z, kind: 'mission' });
-    } else if (this.customWaypoint) {
-      gpsTarget = this.customWaypoint;
-    }
+    const gpsTgt = this.currentInterior ? null : this.getActiveGpsTarget();
+    if (gpsTgt) blips.push({ x: gpsTgt.pos.x, z: gpsTgt.pos.z, kind: this.activities.activeRace ? 'race' : 'mission' });
+    const gpsPath = gpsTgt ? this.grid.computeGpsPath({ x: pos.x, z: pos.z }, gpsTgt.pos) : [];
+    const gpsNav = this.computeGpsNavInfo(pos, gpsPath, gpsTgt?.label ?? '');
 
-    const gpsPath = gpsTarget ? this.grid.computeGpsPath({ x: pos.x, z: pos.z }, gpsTarget) : [];
-
-    // Context interact prompt when on foot near a vehicle
-    let interactPrompt: string | null = null;
-    if (!this.playerVehicle) {
-      const near = this.findNearestHijackableVehicle();
-      if (near) interactPrompt = `[E] HIJACK ${near.stats.name}`;
-    }
-
+    const interaction = this.getNearestInteraction();
     const cdMult = Math.max(0.45, 1 - this.upgrades.hackLevel * 0.18);
     const activeMeta = CAMPAIGN_MISSIONS.find((m) => m.id === this.missions.activeMissionId);
+    const interiorMeta = this.currentInterior ? BUILDING_ENTRANCES.find((b) => b.id === this.currentInterior) : null;
 
-    this.onHudUpdate({
+    const scopeRangeMeters = isAiming
+      ? this.combat.getScopeRangeMeters(
+          this.player.x,
+          this.player.z,
+          -Math.sin(this.cameraRig.yaw),
+          -Math.cos(this.cameraRig.yaw),
+          this.getAllVehicles()
+        )
+      : null;
+
+    this.callbacks.onHudUpdate({
       mode: this.mode,
       fps: this.currentFps,
       cash: this.cash,
@@ -1154,8 +1675,13 @@ export class GameEngine {
       activeRacePlace: this.activities.activeRace ? this.activities.getRacePlace(pos.x, pos.z) : null,
 
       inVehicle: !!this.playerVehicle,
-      vehicleName: this.playerVehicle?.stats.name ?? 'ON FOOT',
+      vehicleDomain: this.playerVehicle?.stats.domain ?? null,
+      vehicleName: this.playerVehicle?.stats.name ?? (this.currentInterior ? interiorMeta?.name ?? 'INTERIOR' : 'ON FOOT'),
       speedMph,
+      rpm: Math.round(this.playerVehicle?.rpm ?? 0),
+      odometerMiles: this.playerVehicle?.odometerMiles ?? 0,
+      altitudeFt: Math.max(0, Math.round(pos.y * 3.28)),
+      collectivePct: Math.round((this.playerVehicle?.collective ?? 0) * 100),
       gear,
       nitro: Math.round(this.vehiclePhysics.nitroCharge),
       playerHp: Math.round(this.player.hp),
@@ -1165,7 +1691,19 @@ export class GameEngine {
       drifting: !!this.playerVehicle?.drifting,
       driftScore: this.vehiclePhysics.driftScore,
       driftMultiplier: this.vehiclePhysics.driftMultiplier,
-      interactPrompt,
+      interactPrompt: interaction?.prompt ?? null,
+      interactKind: interaction?.kind ?? null,
+
+      isAiming,
+      ammoInMag: this.player.ammoInMag,
+      magSize: this.player.magSize,
+      reloading: this.player.reloading,
+      scopeRangeMeters,
+
+      currentInterior: this.currentInterior,
+      currentInteriorName: interiorMeta?.name ?? null,
+      foodQueueLength: this.interiors.getFoodQueueLength(),
+      inventory: this.inventory.map((e) => ({ ...e })),
 
       wantedStars: this.wanted.stars,
       wantedEvading: this.wanted.evading,
@@ -1174,12 +1712,15 @@ export class GameEngine {
       policeDispatch: this.wanted.dispatchText,
 
       districtId: this.currentDistrict,
-      districtName: this.grid.getDistrictName(pos.x, pos.z),
+      districtName: interiorMeta ? interiorMeta.name : this.grid.getDistrictName(pos.x, pos.z),
       timeOfDay: this.sky.preset,
       cameraMode: this.cameraRig.mode,
       radioStation: this.audio.station,
       radioLabel: RADIO_LABELS[this.audio.station],
       radioToast: this.radioToast,
+      spotifyTitle: this.spotifyTitle,
+      spotifyActive: this.spotifyActive,
+      gpsNav,
 
       cassettesCollected: this.activities.getCollectedCount(),
       cassettesTotal: this.activities.collectibles.length,
@@ -1196,10 +1737,12 @@ export class GameEngine {
       dialogue: this.dialogue ? { ...this.dialogue } : null,
       banner: this.banner ? { ...this.banner } : null,
       hitmarkerAlpha: this.hitmarkerAlpha,
-      speedLinesAlpha: this.playerVehicle?.nitroActive ? 0.9 : Math.max(0, (speedMph - 105) / 55),
+      speedLinesAlpha: this.playerVehicle?.nitroActive ? 0.9 : Math.max(0, (speedMph - 108) / 55),
 
-      playerX: pos.x,
-      playerZ: pos.z,
+      nova: this.nova.getView(pos.x, pos.z),
+
+      playerX: this.currentInterior ? this.exteriorReturnPos?.x ?? 0 : pos.x,
+      playerZ: this.currentInterior ? this.exteriorReturnPos?.z ?? 0 : pos.z,
       playerHeading: pos.heading,
       blips,
       gpsPath,

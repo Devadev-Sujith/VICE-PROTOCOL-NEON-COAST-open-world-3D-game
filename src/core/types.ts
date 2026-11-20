@@ -11,15 +11,21 @@ export type VehicleType =
   | 'interceptor'
   | 'armored_van'
   | 'syndicate_suv'
-  | 'buggy';
+  | 'buggy'
+  | 'speedboat'
+  | 'helicopter';
 
-export type CameraMode = 'chase' | 'topdown' | 'hood';
+export type VehicleDomain = 'land' | 'water' | 'air';
+
+export type CameraMode = 'chase' | 'interior' | 'topdown';
 
 export type TimeOfDayPreset = 'sunset' | 'midnight' | 'day';
 
 export type RadioStationId = 'wave88' | 'palm101' | 'pulse99' | 'off';
 
 export type GameMode = 'title' | 'playing' | 'paused' | 'wasted' | 'busted' | 'victory';
+
+export type InteriorId = 'mall' | 'cafe' | 'office';
 
 export interface Vec2 {
   x: number;
@@ -35,12 +41,29 @@ export interface AABB {
   tag?: string;
 }
 
+export interface CircleCollider {
+  x: number;
+  z: number;
+  radius: number;
+  height: number;
+  tag?: string;
+}
+
+export interface BuildingEntranceDef {
+  id: InteriorId;
+  name: string;
+  subtitle: string;
+  x: number;
+  z: number;
+  facingAngle: number;
+  color: number;
+}
+
 export interface StuntRampDef {
   id: string;
   name: string;
   x: number;
   z: number;
-  /** Direction the ramp ascends toward (radians, 0 = +Z, PI/2 = +X) */
   angle: number;
   width: number;
   length: number;
@@ -70,6 +93,7 @@ export interface DestructibleProp {
 
 export interface VehicleStats {
   name: string;
+  domain: VehicleDomain;
   maxSpeed: number;
   accel: number;
   brake: number;
@@ -87,6 +111,15 @@ export interface VehicleStats {
   hasUnderglow?: boolean;
 }
 
+export interface CockpitRig {
+  group: THREE.Group;
+  steeringWheel: THREE.Object3D;
+  dashCanvas: HTMLCanvasElement;
+  dashCtx: CanvasRenderingContext2D;
+  dashTexture: THREE.CanvasTexture;
+  driverEyeOffset: THREE.Vector3;
+}
+
 export interface VehicleEntity {
   id: string;
   type: VehicleType;
@@ -102,6 +135,9 @@ export interface VehicleEntity {
   underglow?: THREE.Mesh;
   nitroFlames: THREE.Mesh[];
   paintMaterials: THREE.MeshStandardMaterial[];
+  cockpit?: CockpitRig;
+  mainRotor?: THREE.Object3D;
+  tailRotor?: THREE.Object3D;
 
   // Physics state
   x: number;
@@ -110,9 +146,9 @@ export interface VehicleEntity {
   vx: number;
   vy: number;
   vz: number;
-  heading: number; // radians: 0 => +Z, sin(h)=x, cos(h)=z
+  heading: number;
   angularVel: number;
-  speed: number; // signed forward speed
+  speed: number;
   steerAngle: number;
   grounded: boolean;
   airTime: number;
@@ -126,14 +162,15 @@ export interface VehicleEntity {
   maxHp: number;
   destroyed: boolean;
   empStunTimer: number;
+  odometerMiles: number;
+  rpm: number;
+  collective: number; // helicopter 0..1
 
   // Ownership / Role
   driver: 'none' | 'player' | 'traffic' | 'police' | 'enemy' | 'racer';
   colorHex: number;
-  /** Visual roll & pitch spring state */
   visualRoll: number;
   visualPitch: number;
-  /** AI Navigation fields */
   aiRoadAxis?: 'x' | 'z';
   aiRoadCoord?: number;
   aiDir?: 1 | -1;
@@ -179,11 +216,56 @@ export interface StreetRaceDef {
   checkpoints: Vec2[];
 }
 
+export interface ShopCatalogItem {
+  id: string;
+  name: string;
+  category: 'food' | 'drink' | 'gear' | 'medical';
+  venue: 'food_court' | 'cafe' | 'mall_shop' | 'vending';
+  price: number;
+  healHp: number;
+  nitroBoost?: number;
+  description: string;
+  icon: string;
+}
+
+export interface InventoryEntry {
+  item: ShopCatalogItem;
+  qty: number;
+}
+
+export interface SpotifyTrackPreset {
+  id: string;
+  title: string;
+  artist: string;
+  embedUrl: string;
+}
+
+export interface SentientMessage {
+  role: 'user' | 'assistant' | 'thought';
+  text: string;
+  actionTag?: string;
+  timestamp: number;
+}
+
+export interface SentientAgentView {
+  name: string;
+  mood: string;
+  currentActivity: string;
+  latestThought: string;
+  latestSpeech: string;
+  district: string;
+  distanceToPlayer: number;
+  apiConnected: boolean;
+  thinking: boolean;
+  model: string;
+  history: SentientMessage[];
+}
+
 export interface UpgradeState {
-  nitroLevel: number; // 0..3
-  armorLevel: number; // 0..3
-  blasterLevel: number; // 0..3
-  hackLevel: number; // 0..3
+  nitroLevel: number;
+  armorLevel: number;
+  blasterLevel: number;
+  hackLevel: number;
   unlockedHypercar: boolean;
   unlockedNetHack: boolean;
 }
@@ -224,8 +306,30 @@ export interface BannerEvent {
 export interface MinimapBlip {
   x: number;
   z: number;
-  kind: 'traffic' | 'police' | 'mission' | 'enemy' | 'paynspray' | 'race' | 'cassette' | 'waypoint' | 'heli' | 'event';
+  kind:
+    | 'traffic'
+    | 'police'
+    | 'mission'
+    | 'enemy'
+    | 'paynspray'
+    | 'race'
+    | 'cassette'
+    | 'waypoint'
+    | 'heli'
+    | 'event'
+    | 'interior'
+    | 'boat'
+    | 'fly_heli'
+    | 'nova';
   color?: string;
+}
+
+export interface GpsNavInfo {
+  active: boolean;
+  destinationLabel: string;
+  distanceMeters: number;
+  bearingDiffDeg: number; // -180..180 relative to player heading
+  turnHint: 'STRAIGHT' | 'SLIGHT RIGHT' | 'TURN RIGHT' | 'SLIGHT LEFT' | 'TURN LEFT' | 'U-TURN' | 'ARRIVING';
 }
 
 export interface HudSnapshot {
@@ -242,12 +346,17 @@ export interface HudSnapshot {
   activeRaceTimer: number | null;
   activeRacePlace: number | null;
 
-  // Player / Vehicle
+  // Player / Vehicle / Aviation / Marine
   inVehicle: boolean;
+  vehicleDomain: VehicleDomain | null;
   vehicleName: string;
   speedMph: number;
+  rpm: number;
+  odometerMiles: number;
+  altitudeFt: number;
+  collectivePct: number;
   gear: string;
-  nitro: number; // 0..100
+  nitro: number;
   playerHp: number;
   playerMaxHp: number;
   vehicleHp: number;
@@ -256,15 +365,29 @@ export interface HudSnapshot {
   driftScore: number;
   driftMultiplier: number;
   interactPrompt: string | null;
+  interactKind: 'vehicle' | 'interior_enter' | 'interior_exit' | 'shop' | 'npc' | 'nova' | 'vending' | null;
+
+  // Weapon / AK-47 Scope state
+  isAiming: boolean;
+  ammoInMag: number;
+  magSize: number;
+  reloading: boolean;
+  scopeRangeMeters: number | null;
+
+  // Interior & Inventory
+  currentInterior: InteriorId | null;
+  currentInteriorName: string | null;
+  foodQueueLength: number;
+  inventory: InventoryEntry[];
 
   // Wanted
-  wantedStars: number; // 0..5
+  wantedStars: number;
   wantedEvading: boolean;
-  wantedCooldownPct: number; // 0..1
-  bustedPct: number; // 0..1
+  wantedCooldownPct: number;
+  bustedPct: number;
   policeDispatch: string | null;
 
-  // World
+  // World & GPS
   districtId: DistrictId;
   districtName: string;
   timeOfDay: TimeOfDayPreset;
@@ -272,6 +395,9 @@ export interface HudSnapshot {
   radioStation: RadioStationId;
   radioLabel: string;
   radioToast: string | null;
+  spotifyTitle: string;
+  spotifyActive: boolean;
+  gpsNav: GpsNavInfo;
 
   // Progression & Tools
   cassettesCollected: number;
@@ -283,6 +409,9 @@ export interface HudSnapshot {
   banner: BannerEvent | null;
   hitmarkerAlpha: number;
   speedLinesAlpha: number;
+
+  // Sentient AI (NOVA)
+  nova: SentientAgentView;
 
   // Minimap & Full Map
   playerX: number;

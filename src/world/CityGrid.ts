@@ -1,4 +1,4 @@
-import type { AABB, DistrictId, StuntRampDef, Vec2 } from '../core/types';
+import type { AABB, BuildingEntranceDef, CircleCollider, DistrictId, StuntRampDef, Vec2 } from '../core/types';
 
 export const WORLD_HALF = 320;
 export const ROAD_COORDS = [-180, -90, 0, 90, 180] as const;
@@ -14,6 +14,48 @@ export const LIGHTHOUSE_POS: Vec2 = { x: -234, z: -234 };
 export const HOSPITAL_RESPAWN: Vec2 = { x: 180, z: 90 };
 export const PRECINCT_RESPAWN: Vec2 = { x: -90, z: 0 };
 
+// Enterable Real-World Building Entrances (right along sidewalks so easy to walk in!)
+export const BUILDING_ENTRANCES: BuildingEntranceDef[] = [
+  {
+    id: 'mall',
+    name: 'NEON COAST MALL',
+    subtitle: '2-Floor Atrium • Escalators • Food Court & Shops',
+    x: 13,
+    z: 42,
+    facingAngle: -Math.PI / 2,
+    color: 0xff2a85,
+  },
+  {
+    id: 'cafe',
+    name: 'SUNSET BEACH CAFÉ',
+    subtitle: 'Ocean Drive Espresso Bar & Pastries',
+    x: 167,
+    z: 45,
+    facingAngle: Math.PI / 2,
+    color: 0xfacc15,
+  },
+  {
+    id: 'office',
+    name: 'APEX CORPORATE TOWER',
+    subtitle: 'Executive Offices & Syndicate Intel Terminals',
+    x: -13,
+    z: -42,
+    facingAngle: Math.PI / 2,
+    color: 0x00f5ff,
+  },
+];
+
+// Marine Docks (Speedboats moored here!) & Helipads (Flyable Helicopters!)
+export const BOAT_DOCK_POSITIONS: { x: number; z: number; heading: number; name: string }[] = [
+  { x: 244, z: 22, heading: Math.PI / 2, name: 'Ocean Pier Marina' },
+  { x: 256, z: 118, heading: Math.PI / 3, name: 'Sunset Beach Cove' },
+];
+
+export const HELIPAD_POSITIONS: { x: number; z: number; heading: number; name: string }[] = [
+  { x: 150, z: 135, heading: -Math.PI / 2, name: 'Ocean Drive Helipad' },
+  { x: 45, z: 20, heading: Math.PI, name: 'Starlight Plaza Helipad' },
+];
+
 export const DISTRICT_NAMES: Record<DistrictId, string> = {
   neon_strip: 'Neon Strip',
   ocean_drive: 'Ocean Drive',
@@ -27,7 +69,7 @@ export const STUNT_RAMPS: StuntRampDef[] = [
     name: 'STARLIGHT SKY JUMP',
     x: 0,
     z: -32,
-    angle: Math.PI, // heads North (-Z)
+    angle: Math.PI,
     width: 9,
     length: 16,
     maxHeight: 4.4,
@@ -37,7 +79,7 @@ export const STUNT_RAMPS: StuntRampDef[] = [
     name: 'OCEAN DRIVE LAUNCH',
     x: 180,
     z: 36,
-    angle: Math.PI, // heads North (-Z)
+    angle: Math.PI,
     width: 9,
     length: 16,
     maxHeight: 4.3,
@@ -47,7 +89,7 @@ export const STUNT_RAMPS: StuntRampDef[] = [
     name: 'PIER YACHT MEGA-RAMP',
     x: 282,
     z: 0,
-    angle: Math.PI / 2, // heads East (+X) over water to Getaway Yacht
+    angle: Math.PI / 2,
     width: 11,
     length: 18,
     maxHeight: 5.4,
@@ -57,7 +99,7 @@ export const STUNT_RAMPS: StuntRampDef[] = [
     name: 'HARBOR CRANE LEAP',
     x: -45,
     z: 135,
-    angle: Math.PI / 2, // heads East (+X)
+    angle: Math.PI / 2,
     width: 9,
     length: 16,
     maxHeight: 4.5,
@@ -67,7 +109,7 @@ export const STUNT_RAMPS: StuntRampDef[] = [
     name: 'BAY CHANNEL CROSSING',
     x: -148,
     z: -148,
-    angle: Math.PI * 0.25, // heads SE (+X, +Z) across channel
+    angle: Math.PI * 0.25,
     width: 9.5,
     length: 16,
     maxHeight: 5.0,
@@ -77,7 +119,7 @@ export const STUNT_RAMPS: StuntRampDef[] = [
     name: 'SUNSET BEACH BOOST',
     x: 222,
     z: -105,
-    angle: 0, // heads South (+Z)
+    angle: 0,
     width: 9.5,
     length: 16,
     maxHeight: 4.2,
@@ -93,6 +135,7 @@ export interface TrafficLightState {
 
 export class CityGrid {
   public colliders: AABB[] = [];
+  public treeColliders: CircleCollider[] = [];
   public lightTimer = 0;
   public trafficLights: TrafficLightState = {
     nsGreen: true,
@@ -105,14 +148,18 @@ export class CityGrid {
     this.colliders.push(aabb);
   }
 
+  public addTreeCollider(x: number, z: number, radius = 0.65, height = 12): void {
+    this.treeColliders.push({ x, z, radius, height, tag: 'tree' });
+  }
+
   public clearColliders(): void {
     this.colliders = [];
+    this.treeColliders = [];
   }
 
   public updateTrafficLights(dt: number): void {
     if (this.trafficLights.chaosTimer > 0) {
       this.trafficLights.chaosTimer = Math.max(0, this.trafficLights.chaosTimer - dt);
-      // All green chaos!
       this.trafficLights.nsGreen = true;
       this.trafficLights.ewGreen = true;
       this.trafficLights.yellow = false;
@@ -153,29 +200,32 @@ export class CityGrid {
     return DISTRICT_NAMES[this.getDistrict(x, z)];
   }
 
-  /** Returns true if position (x,z) is on a drivable causeway bridge */
   public isOnBridge(x: number, z: number): boolean {
-    // North Causeway Bridge (along z = -180, x in [-154, -96])
     if (Math.abs(z - -180) <= 10.5 && x >= -154 && x <= -96) return true;
-    // West Causeway Bridge (along x = -180, z in [-154, -96])
     if (Math.abs(x - -180) <= 10.5 && z >= -154 && z <= -96) return true;
     return false;
   }
 
-  /** Returns true if position (x,z) is on the Ocean Pier */
   public isOnPier(x: number, z: number): boolean {
     return x >= 204 && x <= 306 && Math.abs(z) <= 13.5;
   }
 
-  /** Returns true if position (x,z) is over open ocean or bay channel (not on bridge/pier) */
+  /** True if open ocean or bay channel (drivable by Speedboat!) */
   public isWater(x: number, z: number): boolean {
     if (this.isOnBridge(x, z)) return false;
     if (this.isOnPier(x, z)) return false;
-    // Outer island limits
     if (x < -252 || x > 246 || z < -252 || z > 246) return true;
-    // Causeway bay channel separating NW island
     if (x >= -142 && x <= -108 && z <= -108) return true;
     if (z >= -142 && z <= -108 && x <= -108) return true;
+    return false;
+  }
+
+  /** True if safe navigable water for boats (includes under Causeway bridges!) */
+  public isNavigableWater(x: number, z: number): boolean {
+    if (this.isOnPier(x, z)) return false;
+    if (x < -254 || x > 246 || z < -254 || z > 246) return true;
+    if (x >= -140 && x <= -110 && z <= -110) return true;
+    if (z >= -140 && z <= -110 && x <= -110) return true;
     return false;
   }
 
@@ -189,36 +239,25 @@ export class CityGrid {
     return false;
   }
 
-  /** Analytical height of terrain, bridges, pier, beach slope, and stunt ramps */
   public getGroundInfo(x: number, z: number): { height: number; onRamp: StuntRampDef | null; rampSlope: number } {
     let baseH = 0;
 
-    // 1. Bridges (smooth sinusoidal arch)
     if (Math.abs(z - -180) <= 10.5 && x >= -154 && x <= -96) {
-      const t = (x - -154) / (-96 - -154); // 0..1
+      const t = (x - -154) / (-96 - -154);
       baseH = Math.sin(t * Math.PI) * 4.4;
     } else if (Math.abs(x - -180) <= 10.5 && z >= -154 && z <= -96) {
       const t = (z - -154) / (-96 - -154);
       baseH = Math.sin(t * Math.PI) * 4.4;
-    }
-    // 2. Ocean Pier
-    else if (x >= 204 && x <= 306 && Math.abs(z) <= 13.5) {
-      if (x < 224) {
-        baseH = ((x - 204) / 20) * 1.8;
-      } else {
-        baseH = 1.8;
-      }
-    }
-    // 3. Water / Beach slope
-    else if (this.isWater(x, z)) {
+    } else if (x >= 204 && x <= 306 && Math.abs(z) <= 13.5) {
+      if (x < 224) baseH = ((x - 204) / 20) * 1.8;
+      else baseH = 1.8;
+    } else if (this.isWater(x, z)) {
       baseH = -1.6;
     } else if (x > 202 && x <= 246) {
-      // Smooth sandy beach sloping toward ocean
       const t = Math.min(1, Math.max(0, (x - 202) / 44));
       baseH = -t * 0.85;
     }
 
-    // 4. Stunt Ramps check
     let bestRamp: StuntRampDef | null = null;
     let rampSlope = 0;
     for (const ramp of STUNT_RAMPS) {
@@ -226,14 +265,12 @@ export class CityGrid {
       const dz = z - ramp.z;
       const sinA = Math.sin(ramp.angle);
       const cosA = Math.cos(ramp.angle);
-      // Forward projection along ramp direction
       const forward = dx * sinA + dz * cosA;
-      // Lateral projection
       const lateral = dx * cosA - dz * sinA;
       const halfL = ramp.length * 0.5;
       const halfW = ramp.width * 0.5;
       if (Math.abs(lateral) <= halfW && forward >= -halfL && forward <= halfL) {
-        const t = (forward + halfL) / ramp.length; // 0 at base, 1 at top lip
+        const t = (forward + halfL) / ramp.length;
         const rampH = baseH + t * ramp.maxHeight;
         if (rampH > baseH) {
           baseH = rampH;
@@ -250,19 +287,21 @@ export class CityGrid {
     return this.getGroundInfo(x, z).height;
   }
 
-  /** Smooth circle-vs-AABB resolution with sliding normal */
+  /** Smooth circle-vs-AABB + solid Tree Trunk collision resolution! */
   public resolveCircleCollision(
     x: number,
     z: number,
     radius: number,
     entityY = 0
-  ): { x: number; z: number; hit: boolean; nx: number; nz: number } {
+  ): { x: number; z: number; hit: boolean; hitTree: boolean; nx: number; nz: number } {
     let rx = x;
     let rz = z;
     let hit = false;
+    let hitTree = false;
     let hitNx = 0;
     let hitNz = 0;
 
+    // 1. Buildings, Seawalls, Containers, Guardrails
     for (let i = 0; i < this.colliders.length; i++) {
       const b = this.colliders[i];
       if (entityY > b.height + 0.5) continue;
@@ -293,7 +332,6 @@ export class CityGrid {
           hitNx = nx;
           hitNz = nz;
         } else {
-          // Center inside AABB -> push out along minimum penetration axis
           const penL = Math.abs(rx - b.minX);
           const penR = Math.abs(b.maxX - rx);
           const penT = Math.abs(rz - b.minZ);
@@ -316,10 +354,31 @@ export class CityGrid {
       }
     }
 
-    return { x: rx, z: rz, hit, nx: hitNx, nz: hitNz };
+    // 2. Solid Realistic Palm & City Tree Trunk Colliders!
+    for (let i = 0; i < this.treeColliders.length; i++) {
+      const t = this.treeColliders[i];
+      if (entityY > t.height) continue;
+      const dx = rx - t.x;
+      const dz = rz - t.z;
+      const minDist = radius + t.radius;
+      const distSq = dx * dx + dz * dz;
+      if (distSq < minDist * minDist && distSq > 1e-6) {
+        const dist = Math.sqrt(distSq);
+        const nx = dx / dist;
+        const nz = dz / dist;
+        const push = minDist - dist;
+        rx += nx * push;
+        rz += nz * push;
+        hit = true;
+        hitTree = true;
+        hitNx = nx;
+        hitNz = nz;
+      }
+    }
+
+    return { x: rx, z: rz, hit, hitTree, nx: hitNx, nz: hitNz };
   }
 
-  /** Nearest point snapped to the road network for safe spawning */
   public getNearestRoadPoint(x: number, z: number): { x: number; z: number; heading: number } {
     let bestX: number = ROAD_COORDS[2];
     let bestZ: number = ROAD_COORDS[2];
@@ -349,7 +408,7 @@ export class CityGrid {
     return { x: bestX, z: bestZ, heading };
   }
 
-  /** Clean Manhattan road-grid GPS path for the minimap */
+  /** Clean Manhattan road-grid shortest path (used for GPS Ribbon AND AI Race Opponents!) */
   public computeGpsPath(from: Vec2, to: Vec2): Vec2[] {
     const snapCoord = (v: number): number => {
       let best: number = ROAD_COORDS[0];
@@ -369,7 +428,6 @@ export class CityGrid {
     const endRx = snapCoord(to.x);
     const endRz = snapCoord(to.z);
 
-    // Simple shortest road-graph BFS over 5x5 intersections
     const idxOf = (c: number) => ROAD_COORDS.indexOf(c as any);
     const sNode = `${idxOf(startRx)},${idxOf(startRz)}`;
     const eNode = `${idxOf(endRx)},${idxOf(endRz)}`;
@@ -414,9 +472,26 @@ export class CityGrid {
       cur = parent.get(cur);
     }
     chain.reverse();
-    // Trim redundant detour if already closer along axis
     for (const pt of chain) path.push(pt);
     path.push(to);
     return path;
+  }
+
+  /** Expands an ordered list of race checkpoints into a dense, building-free road-following waypoint list! */
+  public buildRoadRouteForCheckpoints(start: Vec2, checkpoints: Vec2[]): Vec2[] {
+    const full: Vec2[] = [];
+    let prev = start;
+    for (const cp of checkpoints) {
+      const seg = this.computeGpsPath(prev, cp);
+      for (let i = 1; i < seg.length; i++) {
+        const pt = seg[i];
+        const last = full[full.length - 1];
+        if (!last || Math.hypot(last.x - pt.x, last.z - pt.z) > 4) {
+          full.push(pt);
+        }
+      }
+      prev = cp;
+    }
+    return full;
   }
 }

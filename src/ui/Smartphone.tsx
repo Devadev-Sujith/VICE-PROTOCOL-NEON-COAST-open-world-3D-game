@@ -4,19 +4,23 @@ import {
   CheckCircle2,
   Cpu,
   Flag,
+  Music2,
   Paintbrush,
   Radio,
   ShoppingBag,
   Target,
   X,
-  Zap,
 } from 'lucide-react';
 import type { HudSnapshot, RadioStationId, VehicleType } from '../core/types';
 import { CAMPAIGN_MISSIONS } from '../missions/missionData';
 import { STREET_RACES } from '../systems/WorldActivities';
+import { SpotifyConnectPanel } from './SpotifyWidget';
 
 interface SmartphoneProps {
   hud: HudSnapshot;
+  spotifyEmbedUrl: string;
+  onSelectSpotify: (embedUrl: string, title: string) => void;
+  onToggleSpotifyActive: (active: boolean) => void;
   onClose: () => void;
   onLaunchMission: (id: string) => void;
   onLaunchRace: (id: string) => void;
@@ -28,10 +32,13 @@ interface SmartphoneProps {
   onSetVolumes: (m: number, mus: number, sfx: number) => void;
 }
 
-type AppTab = 'heist' | 'hack' | 'shop' | 'garage' | 'radio';
+type AppTab = 'heist' | 'hack' | 'shop' | 'garage' | 'spotify';
 
 export const Smartphone: React.FC<SmartphoneProps> = ({
   hud,
+  spotifyEmbedUrl,
+  onSelectSpotify,
+  onToggleSpotifyActive,
   onClose,
   onLaunchMission,
   onLaunchRace,
@@ -43,6 +50,7 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
   onSetVolumes,
 }) => {
   const [tab, setTab] = useState<AppTab>('heist');
+  const [musicSubTab, setMusicSubTab] = useState<'spotify' | 'fm'>('spotify');
 
   const upgradeCards = [
     {
@@ -61,8 +69,8 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
     },
     {
       key: 'blaster' as const,
-      name: 'OVERCHARGED PLASMA SMG',
-      desc: 'Faster fire rate & +12 damage per bolt',
+      name: 'AK-47 TACTICAL BARREL & OPTIC',
+      desc: 'Faster fire rate & +12 damage per 7.62mm round',
       lvl: hud.upgrades.blasterLevel,
       costs: [3500, 7500, 13000],
     },
@@ -76,9 +84,11 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
   ];
 
   const garageCars: { type: VehicleType; label: string; tag: string; color: string }[] = [
-    { type: 'hypercar', label: 'APEX-X HYPERCAR', tag: 'ULTRA FAST • NEON', color: '#ff1e7a' },
-    { type: 'muscle', label: 'MIAMI V8 MUSCLE', tag: 'DRIFT KING', color: '#00d9ff' },
-    { type: 'interceptor', label: 'NCPD INTERCEPTOR', tag: 'SIRENS + SPEED', color: '#38bdf8' },
+    { type: 'hypercar', label: 'APEX-X HYPERCAR', tag: 'ULTRA FAST • COCKPIT', color: '#ff1e7a' },
+    { type: 'muscle', label: 'MIAMI V8 MUSCLE', tag: 'DRIFT KING • V8', color: '#00c8ff' },
+    { type: 'helicopter', label: 'SKYHAWK HELICOPTER', tag: 'AERIAL FLIGHT • PAD', color: '#38bdf8' },
+    { type: 'speedboat', label: 'NEON WAVE SPEEDBOAT', tag: 'MARINE JET • MARINA', color: '#00f5ff' },
+    { type: 'interceptor', label: 'NCPD INTERCEPTOR', tag: 'SIRENS + SPEED', color: '#60a5fa' },
     { type: 'buggy', label: 'PALM BEACH BUGGY', tag: 'AGILE STUNT', color: '#22c55e' },
     { type: 'gt_coupe', label: 'VICE GT COUPE', tag: 'BALANCED', color: '#a855f7' },
     { type: 'armored_van', label: 'VAULT RAMMER VAN', tag: 'HEAVY TANK', color: '#f59e0b' },
@@ -91,7 +101,7 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
         position: 'fixed',
         right: 22,
         bottom: 84,
-        width: 348,
+        width: 358,
         maxHeight: 'calc(100vh - 130px)',
         borderRadius: 26,
         border: '2px solid rgba(0, 245, 255, 0.5)',
@@ -102,7 +112,7 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
         boxShadow: '0 22px 60px rgba(0, 0, 0, 0.78), 0 0 28px rgba(0, 245, 255, 0.25)',
       }}
     >
-      {/* Phone Top Notch / Status Bar */}
+      {/* Phone Top Status Bar */}
       <div
         style={{
           padding: '12px 16px 10px',
@@ -183,7 +193,7 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
             })}
 
             <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.12em', color: '#22ff88', marginTop: 4 }}>
-              <Flag size={12} style={{ display: 'inline', verticalAlign: '-2px', marginRight: 4 }} /> STREET RACES
+              <Flag size={12} style={{ display: 'inline', verticalAlign: '-2px', marginRight: 4 }} /> STREET RACES (SMART ROAD AI)
             </div>
             {STREET_RACES.map((r) => (
               <div
@@ -229,7 +239,6 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
                 title: 'TRAFFIC GRID CHAOS',
                 desc: 'Forces all city lights haywire — traffic surges through intersections to block chasing cops!',
                 cd: hud.hacks.trafficChaos,
-                max: hud.hacks.trafficChaosMax,
               },
               {
                 id: 'emp' as const,
@@ -237,7 +246,6 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
                 title: 'PULSE EMP SHOCKWAVE',
                 desc: 'Blasts an electric dome around you, stalling all NCPD cars & damaging nearby Syndicate rides!',
                 cd: hud.hacks.empPulse,
-                max: hud.hacks.empPulseMax,
               },
               {
                 id: 'spoof' as const,
@@ -245,7 +253,6 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
                 title: 'NCPD SCANNER SPOOF',
                 desc: 'Scrambles police dispatch transponders to instantly drop 1 Wanted Star.',
                 cd: hud.hacks.spoofScanner,
-                max: hud.hacks.spoofScannerMax,
               },
             ].map((h) => {
               const ready = h.cd <= 0 && (h.id !== 'spoof' || hud.wantedStars > 0);
@@ -324,7 +331,7 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
           <>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.12em', color: '#00f5ff' }}>
-                INSTANT VEHICLE DROP
+                LAND, SEA & AIR FLEET DROP
               </span>
               <button
                 className="btn-secondary"
@@ -366,60 +373,97 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
           </>
         )}
 
-        {tab === 'radio' && (
+        {tab === 'spotify' && (
           <>
-            <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.12em', color: '#facc15' }}>
-              NEON COAST FM TUNER
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                className={musicSubTab === 'spotify' ? 'btn-primary' : 'btn-secondary'}
+                onClick={() => setMusicSubTab('spotify')}
+                style={{
+                  flex: 1,
+                  padding: '6px',
+                  borderRadius: 8,
+                  fontSize: 10,
+                  background: musicSubTab === 'spotify' ? 'linear-gradient(135deg, #1db954, #15803d)' : undefined,
+                  borderColor: '#1db954',
+                }}
+              >
+                SPOTIFY CONNECT
+              </button>
+              <button
+                className={musicSubTab === 'fm' ? 'btn-primary' : 'btn-secondary'}
+                onClick={() => setMusicSubTab('fm')}
+                style={{ flex: 1, padding: '6px', borderRadius: 8, fontSize: 10 }}
+              >
+                FM SYNTH RADIO
+              </button>
             </div>
-            {(
-              [
-                ['wave88', 'WAVE 88.5 FM', '80s Vice City Synthwave Outrun'],
-                ['palm101', 'PALM 101.2 FM', 'Miami Beach Sunset Lo-Fi'],
-                ['pulse99', 'PULSE 99.9 FM', 'High-Energy Chase Electro'],
-                ['off', 'RADIO OFF', 'Engine & Ambient SFX Only'],
-              ] as [RadioStationId, string, string][]
-            ).map(([id, title, sub]) => {
-              const active = hud.radioStation === id;
-              return (
-                <button
-                  key={id}
-                  onClick={() => onSetRadio(id)}
-                  style={{
-                    textAlign: 'left',
-                    padding: '10px 12px',
-                    borderRadius: 10,
-                    background: active ? 'rgba(255, 42, 133, 0.22)' : 'rgba(255,255,255,0.05)',
-                    border: `1px solid ${active ? '#ff2a85' : 'rgba(255,255,255,0.12)'}`,
-                    color: '#fff',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <div style={{ fontSize: 12, fontWeight: 900, color: active ? '#ff8dc7' : '#fff' }}>{title}</div>
-                  <div style={{ fontSize: 10, color: '#cbd5e1' }}>{sub}</div>
-                </button>
-              );
-            })}
 
-            <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {[
-                { label: 'MASTER', val: hud.audioMaster, set: (v: number) => onSetVolumes(v, hud.audioMusic, hud.audioSfx) },
-                { label: 'RADIO MUSIC', val: hud.audioMusic, set: (v: number) => onSetVolumes(hud.audioMaster, v, hud.audioSfx) },
-                { label: 'SFX & ENGINE', val: hud.audioSfx, set: (v: number) => onSetVolumes(hud.audioMaster, hud.audioMusic, v) },
-              ].map((s) => (
-                <label key={s.label} style={{ fontSize: 10, fontWeight: 800, color: '#cbd5e1', display: 'flex', flexDirection: 'column', gap: 3 }}>
-                  <span>{s.label}: {Math.round(s.val * 100)}%</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={s.val}
-                    onChange={(e) => s.set(parseFloat(e.target.value))}
-                    style={{ accentColor: '#00f5ff' }}
-                  />
-                </label>
-              ))}
-            </div>
+            {musicSubTab === 'spotify' ? (
+              <SpotifyConnectPanel
+                activeEmbedUrl={spotifyEmbedUrl}
+                activeTitle={hud.spotifyTitle}
+                spotifyActive={hud.spotifyActive}
+                onSelectTrack={onSelectSpotify}
+                onToggleActive={onToggleSpotifyActive}
+                compact
+              />
+            ) : (
+              <>
+                {(
+                  [
+                    ['wave88', 'WAVE 88.5 FM', '80s Vice City Synthwave Outrun'],
+                    ['palm101', 'PALM 101.2 FM', 'Miami Beach Sunset Lo-Fi'],
+                    ['pulse99', 'PULSE 99.9 FM', 'High-Energy Chase Electro'],
+                    ['off', 'RADIO OFF', 'Engine & Ambient SFX Only'],
+                  ] as [RadioStationId, string, string][]
+                ).map(([id, title, sub]) => {
+                  const active = hud.radioStation === id && !hud.spotifyActive;
+                  return (
+                    <button
+                      key={id}
+                      onClick={() => {
+                        onToggleSpotifyActive(false);
+                        onSetRadio(id);
+                      }}
+                      style={{
+                        textAlign: 'left',
+                        padding: '9px 12px',
+                        borderRadius: 10,
+                        background: active ? 'rgba(255, 42, 133, 0.22)' : 'rgba(255,255,255,0.05)',
+                        border: `1px solid ${active ? '#ff2a85' : 'rgba(255,255,255,0.12)'}`,
+                        color: '#fff',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <div style={{ fontSize: 12, fontWeight: 900, color: active ? '#ff8dc7' : '#fff' }}>{title}</div>
+                      <div style={{ fontSize: 10, color: '#cbd5e1' }}>{sub}</div>
+                    </button>
+                  );
+                })}
+
+                <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 7 }}>
+                  {[
+                    { label: 'MASTER', val: hud.audioMaster, set: (v: number) => onSetVolumes(v, hud.audioMusic, hud.audioSfx) },
+                    { label: 'RADIO MUSIC', val: hud.audioMusic, set: (v: number) => onSetVolumes(hud.audioMaster, v, hud.audioSfx) },
+                    { label: 'SFX & ENGINE', val: hud.audioSfx, set: (v: number) => onSetVolumes(hud.audioMaster, hud.audioMusic, v) },
+                  ].map((s) => (
+                    <label key={s.label} style={{ fontSize: 10, fontWeight: 800, color: '#cbd5e1', display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      <span>{s.label}: {Math.round(s.val * 100)}%</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={s.val}
+                        onChange={(e) => s.set(parseFloat(e.target.value))}
+                        style={{ accentColor: '#00f5ff' }}
+                      />
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
           </>
         )}
       </div>
@@ -439,8 +483,8 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
             ['heist', 'OPS', <Target size={16} />],
             ['hack', 'HACK', <Cpu size={16} />],
             ['shop', 'SHOP', <ShoppingBag size={16} />],
-            ['garage', 'CARS', <Car size={16} />],
-            ['radio', 'FM', <Radio size={16} />],
+            ['garage', 'FLEET', <Car size={16} />],
+            ['spotify', 'SPOTIFY', <Music2 size={16} color={tab === 'spotify' ? '#1db954' : undefined} />],
           ] as [AppTab, string, React.ReactNode][]
         ).map(([id, lbl, icon]) => (
           <button
@@ -449,7 +493,7 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
             style={{
               background: 'none',
               border: 'none',
-              color: tab === id ? '#00f5ff' : '#94a3b8',
+              color: tab === id ? (id === 'spotify' ? '#1db954' : '#00f5ff') : '#94a3b8',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',

@@ -11,7 +11,9 @@ interface DemoToolbarProps {
   onClearStars: () => void;
   onSpawnHypercar: () => void;
   onAddCash: () => void;
-  onTeleport: (loc: 'ocean' | 'downtown' | 'docks' | 'causeway' | 'pier') => void;
+  onTeleport: (
+    loc: 'ocean' | 'downtown' | 'docks' | 'causeway' | 'pier' | 'mall' | 'cafe' | 'helipad' | 'marina'
+  ) => void;
 }
 
 export const DemoToolbar: React.FC<DemoToolbarProps> = ({
@@ -105,6 +107,10 @@ export const DemoToolbar: React.FC<DemoToolbarProps> = ({
               [
                 ['ocean', 'Ocean Dr'],
                 ['downtown', 'Neon Strip'],
+                ['mall', 'Neon Mall'],
+                ['cafe', 'Sunset Café'],
+                ['helipad', 'Helipad'],
+                ['marina', 'Boat Dock'],
                 ['docks', 'Pay-n-Spray'],
                 ['causeway', 'Fort Bayview'],
                 ['pier', 'Pier Ramp'],
