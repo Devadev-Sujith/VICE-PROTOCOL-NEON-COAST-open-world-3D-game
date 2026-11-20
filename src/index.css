@@ -1,0 +1,154 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #070512;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: #f8fafc;
+  user-select: none;
+}
+
+/* Vice-City Glassmorphism Panels */
+.glass-panel {
+  background: linear-gradient(145deg, rgba(13, 14, 30, 0.84), rgba(20, 11, 36, 0.78));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+.neon-title {
+  background: linear-gradient(180deg, #fff5d6 0%, #ff8dc7 46%, #ff2a85 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 24px rgba(255, 42, 133, 0.65));
+}
+
+.neon-cyan-text {
+  color: #00f5ff;
+  text-shadow: 0 0 14px rgba(0, 245, 255, 0.65);
+}
+
+.neon-gold-text {
+  color: #facc15;
+  text-shadow: 0 0 14px rgba(250, 204, 21, 0.65);
+}
+
+.neon-pink-text {
+  color: #ff47a3;
+  text-shadow: 0 0 14px rgba(255, 71, 163, 0.65);
+}
+
+/* Radial Nitro Speed Lines Overlay */
+.speed-lines {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-conic-gradient(
+    from 0deg at 50% 50%,
+    rgba(0, 245, 255, 0.16) 0deg 1.4deg,
+    transparent 1.4deg 11deg
+  );
+  -webkit-mask-image: radial-gradient(circle at center, transparent 42%, black 92%);
+  mask-image: radial-gradient(circle at center, transparent 42%, black 92%);
+  transition: opacity 0.12s ease-out;
+}
+
+/* Police Siren Edge Pulse */
+@keyframes policeFlash {
+  0%, 100% {
+    box-shadow: inset 0 0 42px rgba(255, 30, 66, 0.34);
+  }
+  50% {
+    box-shadow: inset 0 0 42px rgba(0, 180, 255, 0.34);
+  }
+}
+
+.police-vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  animation: policeFlash 0.65s infinite ease-in-out;
+}
+
+@keyframes popIn {
+  0% {
+    opacity: 0;
+    transform: translateY(14px) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-pop {
+  animation: popIn 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes pulseStar {
+  0%, 100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 8px rgba(255, 30, 66, 0.9));
+  }
+  50% {
+    transform: scale(1.16);
+    filter: drop-shadow(0 0 12px rgba(0, 217, 255, 0.95));
+  }
+}
+
+.star-active {
+  animation: pulseStar 0.7s infinite ease-in-out;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #ff2a85, #ff6b35);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: transform 0.14s ease, box-shadow 0.14s ease, filter 0.14s ease;
+  box-shadow: 0 8px 26px rgba(255, 42, 133, 0.45);
+}
+
+.btn-primary:hover {
+  transform: translateY(-2px) scale(1.02);
+  filter: brightness(1.1);
+  box-shadow: 0 12px 32px rgba(255, 42, 133, 0.65);
+}
+
+.btn-secondary {
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(0, 245, 255, 0.5);
+  color: #e0f7ff;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.btn-secondary:hover {
+  background: rgba(0, 245, 255, 0.16);
+  border-color: #00f5ff;
+  transform: translateY(-1px);
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+}
