@@ -6,12 +6,12 @@ export const VEHICLE_STATS: Record<VehicleType, VehicleStats> = {
   hypercar: {
     name: 'APEX-X FERRARI GT',
     domain: 'land',
-    maxSpeed: 58,
-    accel: 44,
-    brake: 58,
-    turnSpeed: 2.75,
-    driftGrip: 2.2,
-    normalGrip: 9.8,
+    maxSpeed: 39, // ~87 MPH city cruise, ~120 MPH Nitro (realistic & super controllable!)
+    accel: 23,
+    brake: 36,
+    turnSpeed: 2.35,
+    driftGrip: 2.3,
+    normalGrip: 9.6,
     mass: 1.38,
     maxHp: 155,
     width: 2.1,
@@ -24,12 +24,12 @@ export const VEHICLE_STATS: Record<VehicleType, VehicleStats> = {
   muscle: {
     name: 'MIAMI V8 COUPE',
     domain: 'land',
-    maxSpeed: 48,
-    accel: 36,
-    brake: 48,
-    turnSpeed: 2.6,
-    driftGrip: 1.95,
-    normalGrip: 8.7,
+    maxSpeed: 33, // ~74 MPH cruise, ~100 MPH Nitro
+    accel: 19,
+    brake: 32,
+    turnSpeed: 2.25,
+    driftGrip: 2.05,
+    normalGrip: 8.8,
     mass: 1.52,
     maxHp: 145,
     width: 2.1,
@@ -42,10 +42,10 @@ export const VEHICLE_STATS: Record<VehicleType, VehicleStats> = {
   gt_coupe: {
     name: 'VICE GT SPIDER',
     domain: 'land',
-    maxSpeed: 45,
-    accel: 32,
-    brake: 46,
-    turnSpeed: 2.65,
+    maxSpeed: 31, // ~70 MPH
+    accel: 18,
+    brake: 30,
+    turnSpeed: 2.3,
     driftGrip: 2.4,
     normalGrip: 9.0,
     mass: 1.35,
@@ -59,12 +59,12 @@ export const VEHICLE_STATS: Record<VehicleType, VehicleStats> = {
   taxi: {
     name: 'COAST CAB TAXI',
     domain: 'land',
-    maxSpeed: 38,
-    accel: 26,
-    brake: 42,
-    turnSpeed: 2.45,
+    maxSpeed: 26, // ~58 MPH realistic sedan
+    accel: 14,
+    brake: 28,
+    turnSpeed: 2.15,
     driftGrip: 2.7,
-    normalGrip: 8.4,
+    normalGrip: 8.5,
     mass: 1.48,
     maxHp: 125,
     width: 2.08,
@@ -76,10 +76,10 @@ export const VEHICLE_STATS: Record<VehicleType, VehicleStats> = {
   police: {
     name: 'NCPD CRUISER',
     domain: 'land',
-    maxSpeed: 45,
-    accel: 33,
-    brake: 48,
-    turnSpeed: 2.68,
+    maxSpeed: 32, // ~72 MPH patrol pursuit
+    accel: 18.5,
+    brake: 32,
+    turnSpeed: 2.3,
     driftGrip: 2.5,
     normalGrip: 9.2,
     mass: 1.68,
@@ -94,11 +94,11 @@ export const VEHICLE_STATS: Record<VehicleType, VehicleStats> = {
   interceptor: {
     name: 'NCPD INTERCEPTOR',
     domain: 'land',
-    maxSpeed: 54,
-    accel: 40,
-    brake: 52,
-    turnSpeed: 2.82,
-    driftGrip: 2.35,
+    maxSpeed: 37, // ~83 MPH highway pursuit
+    accel: 22,
+    brake: 34,
+    turnSpeed: 2.45,
+    driftGrip: 2.4,
     normalGrip: 9.5,
     mass: 1.72,
     maxHp: 165,
@@ -113,12 +113,12 @@ export const VEHICLE_STATS: Record<VehicleType, VehicleStats> = {
   armored_van: {
     name: 'SYNDICATE VAULT VAN',
     domain: 'land',
-    maxSpeed: 35,
-    accel: 23,
-    brake: 38,
-    turnSpeed: 2.1,
+    maxSpeed: 24, // ~54 MPH heavy truck
+    accel: 12,
+    brake: 24,
+    turnSpeed: 1.85,
     driftGrip: 3.4,
-    normalGrip: 8.0,
+    normalGrip: 8.2,
     mass: 3.0,
     maxHp: 320,
     width: 2.48,
@@ -130,11 +130,11 @@ export const VEHICLE_STATS: Record<VehicleType, VehicleStats> = {
   syndicate_suv: {
     name: 'CRIMSON ENFORCER',
     domain: 'land',
-    maxSpeed: 45,
-    accel: 34,
-    brake: 44,
-    turnSpeed: 2.5,
-    driftGrip: 2.5,
+    maxSpeed: 31, // ~69 MPH
+    accel: 17.5,
+    brake: 30,
+    turnSpeed: 2.15,
+    driftGrip: 2.6,
     normalGrip: 8.6,
     mass: 1.88,
     maxHp: 165,
@@ -148,11 +148,11 @@ export const VEHICLE_STATS: Record<VehicleType, VehicleStats> = {
   buggy: {
     name: 'PALM BEACH ROADSTER',
     domain: 'land',
-    maxSpeed: 44,
-    accel: 37,
-    brake: 46,
-    turnSpeed: 3.0,
-    driftGrip: 2.1,
+    maxSpeed: 31, // ~69 MPH
+    accel: 20,
+    brake: 30,
+    turnSpeed: 2.55,
+    driftGrip: 2.15,
     normalGrip: 8.8,
     mass: 1.12,
     maxHp: 115,
@@ -166,10 +166,10 @@ export const VEHICLE_STATS: Record<VehicleType, VehicleStats> = {
   speedboat: {
     name: 'RIVA NEON SPEEDBOAT',
     domain: 'water',
-    maxSpeed: 50,
-    accel: 34,
-    brake: 26,
-    turnSpeed: 2.2,
+    maxSpeed: 34, // ~75 MPH racing marine craft
+    accel: 21,
+    brake: 20,
+    turnSpeed: 2.0,
     driftGrip: 1.5,
     normalGrip: 3.4,
     mass: 1.6,
@@ -184,10 +184,10 @@ export const VEHICLE_STATS: Record<VehicleType, VehicleStats> = {
   helicopter: {
     name: 'SKYHAWK TWIN-TURBINE',
     domain: 'air',
-    maxSpeed: 56,
-    accel: 28,
-    brake: 22,
-    turnSpeed: 1.8,
+    maxSpeed: 42, // ~94 KTS scenic city flight
+    accel: 20,
+    brake: 18,
+    turnSpeed: 1.65,
     driftGrip: 1.2,
     normalGrip: 2.0,
     mass: 2.4,
@@ -358,7 +358,7 @@ export function updateCockpitDashboard(
   ctx.lineWidth = 3;
   ctx.strokeRect(4, 4, w - 8, h - 8);
 
-  const speedMph = Math.round(Math.abs(v.speed) * 2.75);
+  const speedMph = Math.round(Math.abs(v.speed) * 2.237);
 
   // LEFT/CENTER: Spotify CarPlay Infotainment Display
   ctx.fillStyle = spotifyActive ? 'rgba(29, 185, 84, 0.18)' : 'rgba(255, 42, 133, 0.12)';

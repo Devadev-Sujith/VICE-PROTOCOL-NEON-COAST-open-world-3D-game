@@ -4,7 +4,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { AudioEngine, RADIO_LABELS } from '../audio/AudioEngine';
 import { CameraRig } from '../entities/CameraRig';
-import { OUTFITS, PlayerController, WEAPON_LABELS } from '../entities/PlayerController';
+import { DEFAULT_AVATAR, OUTFITS, PlayerController, WEAPON_LABELS } from '../entities/PlayerController';
 import {
   createVehicleEntity,
   repaintVehicle,
@@ -16,6 +16,7 @@ import { VehiclePhysics } from '../entities/VehiclePhysics';
 import { CAMPAIGN_MISSIONS, CAMPAIGN_TARGET_CASH } from '../missions/missionData';
 import { MissionManager } from '../missions/MissionManager';
 import { EnemyAndCombat } from '../systems/EnemyAndCombat';
+import { MultiplayerSystem } from '../systems/MultiplayerSystem';
 import { ParticlesVFX } from '../systems/ParticlesVFX';
 import { PedestrianAI } from '../systems/PedestrianAI';
 import { SentientAI } from '../systems/SentientAI';
@@ -41,6 +42,7 @@ import { SkyAndLighting } from '../world/SkyAndLighting';
 import { EventBus } from './EventBus';
 import { ModelLibrary } from './ModelLibrary';
 import type {
+  AvatarConfig,
   BannerEvent,
   DialogueMessage,
   DistrictId,
@@ -64,7 +66,7 @@ import type {
 export interface EngineCallbacks {
   onHudUpdate: (snap: HudSnapshot) => void;
   onOpenShopVenue?: (venue: ShopCatalogItem['venue']) => void;
-  onOpenPhoneMessages?: () => void;
+  onOpenPhoneMessages?: (threadId?: string) => void;
 }
 
 export class GameEngine {
@@ -88,10 +90,14 @@ export class GameEngine {
   public traffic: TrafficAI;
   public peds: PedestrianAI;
   public nova: SentientAI;
+  public multiplayer: MultiplayerSystem;
   public wanted: WantedSystem;
   public combat: EnemyAndCombat;
   public activities: WorldActivities;
   public missions: MissionManager;
+
+  // Player Custom Avatar (persisted across sessions & synced live in Multiplayer!)
+  public avatar: AvatarConfig = { ...DEFAULT_AVATAR };
 
   // Game state
   public mode: GameMode = 'title';
@@ -213,10 +219,13 @@ export class GameEngine {
     this.vfx = new ParticlesVFX(this.scene);
     this.vehiclePhysics = new VehiclePhysics(this.grid, this.events, this.vfx);
     this.player = new PlayerController(this.scene, this.camera, this.grid, this.events);
+    this.avatar = this.loadPersistedAvatar();
+    this.player.applyAvatarConfig(this.avatar);
     this.cameraRig = new CameraRig(this.camera);
     this.traffic = new TrafficAI(this.scene, this.grid);
-    this.peds = new PedestrianAI(this.scene, this.grid);
+    this.peds = new PedestrianAI(this.scene, this.grid, this.vfx);
     this.nova = new SentientAI(this.scene, this.grid, this.events);
+    this.multiplayer = new MultiplayerSystem(this.scene, this.grid, this.events);
     this.wanted = new WantedSystem(this.scene, this.grid, this.events);
     this.combat = new EnemyAndCombat(this.scene, this.grid, this.vfx, this.events);
     this.activities = new WorldActivities(this.scene, this.grid, this.vfx, this.events);
@@ -324,17 +333,28 @@ export class GameEngine {
       }
     });
 
-    // GTA NPC Takedown & Headshot Feedback!
-    this.peds.onNpcKilled = (npc, isHeadshot) => {
+    // GTA NPC Takedown & Headshot Feedback (Visceral blood spatter/pools handled in PedestrianAI — ZERO green bubbles!)
+    this.peds.onNpcKilled = (_npc, isHeadshot) => {
       const drop = 45 + Math.floor(Math.random() * 75);
       this.cash += drop;
-      this.vfx.spawnCashBurst(npc.x, npc.y + 0.8, npc.z);
       this.audio.playCash();
       if (isHeadshot) {
         this.headshotToastTtl = 1.6;
         this.radioToast = `HEADSHOT! +$${drop}`;
         this.radioToastTtl = 2.0;
       }
+    };
+
+    this.multiplayer.onIncomingToast = (text) => {
+      this.radioToast = text;
+      this.radioToastTtl = 3.2;
+      this.audio.playCash();
+      this.pushHudSnapshot();
+    };
+    this.multiplayer.onCoopInvite = (fromName, _missionId, missionTitle) => {
+      this.radioToast = `${fromName.toUpperCase()} STARTED ${missionTitle.toUpperCase()} — JOIN IN PHONE PLAYERS!`;
+      this.radioToastTtl = 4.2;
+      this.pushHudSnapshot();
     };
 
     this.combat.onHeadshotKill = () => {
@@ -430,7 +450,7 @@ export class GameEngine {
         this.events.emit('ui:banner', {
           kind: 'victory',
           title: 'GRAND HEIST COMPLETE!',
-          subtitle: 'YOU ARE THE KING OF NEON COAST!',
+          subtitle: `${this.avatar.name.toUpperCase()}, YOU ARE THE KING OF NEON COAST!`,
           rewardText: `+$${cash.toLocaleString()} • TOTAL: $${this.cash.toLocaleString()}`,
           duration: 99,
         });
@@ -473,6 +493,7 @@ export class GameEngine {
   public dispose(): void {
     this.disposed = true;
     cancelAnimationFrame(this.rafId);
+    this.multiplayer.dispose();
     window.removeEventListener('keydown', this.handleKeyDown);
     window.removeEventListener('keyup', this.handleKeyUp);
     window.removeEventListener('resize', this.handleResize);
@@ -693,6 +714,25 @@ export class GameEngine {
       };
     }
 
+    // Check nearby online multiplayer player -> Add Friend or Message!
+    const nearRemote = this.multiplayer.findNearestRemotePlayer(this.player.x, this.player.z, 5.5);
+    if (nearRemote) {
+      return {
+        prompt: nearRemote.isFriend
+          ? `[E] MESSAGE ${nearRemote.name.toUpperCase()}`
+          : `[E] ADD FRIEND ${nearRemote.name.toUpperCase()}`,
+        kind: 'remote_player',
+        execute: () => {
+          if (nearRemote.isFriend) {
+            this.exitPointerLock();
+            this.callbacks.onOpenPhoneMessages?.(nearRemote.id);
+          } else {
+            this.addFriend(nearRemote.id);
+          }
+        },
+      };
+    }
+
     // Check NOVA nearby -> opens Messages DM with Nova inside your Phone!
     if (Math.hypot(this.player.x - this.nova.x, this.player.z - this.nova.z) < 4.8) {
       return {
@@ -700,7 +740,7 @@ export class GameEngine {
         kind: 'nova',
         execute: () => {
           this.exitPointerLock();
-          this.callbacks.onOpenPhoneMessages?.();
+          this.callbacks.onOpenPhoneMessages?.('nova');
         },
       };
     }
@@ -798,6 +838,64 @@ export class GameEngine {
     this.pushHudSnapshot();
   }
 
+  // === PLAYER AVATAR CUSTOMIZATION & NAMING (PERSISTED + SYNCED LIVE IN MULTIPLAYER!) ===
+  private loadPersistedAvatar(): AvatarConfig {
+    try {
+      const raw = localStorage.getItem('neon_coast_avatar_v1');
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<AvatarConfig>;
+        return { ...DEFAULT_AVATAR, ...parsed, name: (parsed.name || DEFAULT_AVATAR.name).slice(0, 18) };
+      }
+    } catch {
+      // ignore
+    }
+    return { ...DEFAULT_AVATAR };
+  }
+
+  public setAvatarConfig(cfg: AvatarConfig): void {
+    const cleanName = cfg.name.trim().slice(0, 18) || DEFAULT_AVATAR.name;
+    this.avatar = { ...cfg, name: cleanName };
+    this.player.applyAvatarConfig(this.avatar);
+    try {
+      localStorage.setItem('neon_coast_avatar_v1', JSON.stringify(this.avatar));
+    } catch {
+      // ignore
+    }
+    this.pushHudSnapshot();
+  }
+
+  // === ONLINE MULTIPLAYER FRIENDS, DMs & CO-OP MISSIONS ===
+  public addFriend(playerId: string): boolean {
+    const ok = this.multiplayer.addFriend(playerId, this.avatar.name);
+    if (ok) {
+      const mp = this.multiplayer.getView(this.player.x, this.player.z);
+      const name = mp.friendNames[playerId] || 'PLAYER';
+      this.audio.playCash();
+      this.radioToast = `ADDED ${name.toUpperCase()} TO PHONE MESSAGES!`;
+      this.radioToastTtl = 2.8;
+      this.pushHudSnapshot();
+    }
+    return ok;
+  }
+
+  public sendFriendDm(friendId: string, text: string): void {
+    if (this.multiplayer.sendDirectMessage(friendId, this.avatar.name, text)) {
+      this.pushHudSnapshot();
+    }
+  }
+
+  public markFriendDmRead(friendId: string): void {
+    this.multiplayer.markThreadRead(friendId);
+    this.pushHudSnapshot();
+  }
+
+  public joinCoopMission(missionId: string): void {
+    this.launchMission(missionId);
+    this.radioToast = 'JOINED CO-OP HEIST MISSION!';
+    this.radioToastTtl = 3.0;
+    this.pushHudSnapshot();
+  }
+
   // === WARDROBE / DRESS CHANGE SYSTEM (ITEM #21) ===
   public buyOrEquipOutfit(outfitId: string): boolean {
     const outfit = OUTFITS.find((o) => o.id === outfitId);
@@ -814,6 +912,20 @@ export class GameEngine {
     }
     this.equippedOutfitId = outfitId;
     this.player.applyOutfit(outfit);
+    // Reflect outfit change onto AvatarConfig so multiplayer & runtime stay 100% synced!
+    this.avatar = {
+      ...this.avatar,
+      jacketColor: outfit.jacketColor,
+      shirtColor: outfit.shirtColor,
+      pantsColor: outfit.pantsColor,
+      shoeColor: outfit.shoeColor,
+      hasShades: outfit.hasShades,
+    };
+    try {
+      localStorage.setItem('neon_coast_avatar_v1', JSON.stringify(this.avatar));
+    } catch {
+      // ignore
+    }
     this.audio.playPayNSpray();
     this.radioToast = `EQUIPPED OUTFIT: ${outfit.name.toUpperCase()}`;
     this.radioToastTtl = 2.6;
@@ -892,6 +1004,7 @@ export class GameEngine {
   public async sendMessageToNova(text: string): Promise<void> {
     const pos = this.getPlayerPos();
     await this.nova.talkToNova(text, {
+      playerName: this.avatar.name,
       playerX: pos.x,
       playerZ: pos.z,
       playerDistrict: this.grid.getDistrictName(pos.x, pos.z),
@@ -966,6 +1079,10 @@ export class GameEngine {
     this.activities.stopStreetRace();
     this.mode = 'playing';
     this.missions.startMission(id);
+    const meta = CAMPAIGN_MISSIONS.find((m) => m.id === id);
+    if (meta) {
+      this.multiplayer.broadcastMissionCoop(this.avatar.name, id, meta.title);
+    }
     this.pushHudSnapshot();
   }
 
@@ -1496,7 +1613,7 @@ export class GameEngine {
         );
 
         // Near-Miss High-Speed Bonus!
-        if (pv.stats.domain === 'land' && Math.abs(pv.speed) > 31 && this.nearMissCooldown <= 0) {
+        if (pv.stats.domain === 'land' && Math.abs(pv.speed) > 24 && this.nearMissCooldown <= 0) {
           for (const tv of this.traffic.vehicles) {
             const d = Math.hypot(tv.x - pv.x, tv.z - pv.z);
             if (d > 2.8 && d < 4.5) {
@@ -1667,6 +1784,7 @@ export class GameEngine {
 
         this.peds.update(dt, posNow.x, posNow.z, Math.abs(posNow.speed), !!this.playerVehicle);
         this.nova.update(dt, this.elapsed, {
+          playerName: this.avatar.name,
           playerX: posNow.x,
           playerZ: posNow.z,
           playerDistrict: this.grid.getDistrictName(posNow.x, posNow.z),
@@ -1711,6 +1829,25 @@ export class GameEngine {
           }
         }
       }
+      // Sync our position, styled avatar, vehicle & co-op mission across the SINGLE GLOBAL WORLD!
+      const activeMetaNow = CAMPAIGN_MISSIONS.find((m) => m.id === this.missions.activeMissionId);
+      this.multiplayer.update(rawDt, {
+        avatar: this.avatar,
+        x: posNow.x,
+        y: posNow.y,
+        z: posNow.z,
+        vx: posNow.vx,
+        vz: posNow.vz,
+        heading: posNow.heading,
+        inVehicle: !!this.playerVehicle,
+        vehicleType: this.playerVehicle?.type ?? null,
+        vehicleName: this.playerVehicle?.stats.name ?? '',
+        vehicleColor: this.playerVehicle?.colorHex ?? 0x00c8ff,
+        speed: posNow.speed,
+        interiorId: this.currentInterior,
+        activeMissionId: this.missions.activeMissionId,
+        activeMissionTitle: activeMetaNow?.title ?? null,
+      });
     }
 
     this.vfx.update(dt);
@@ -1754,12 +1891,12 @@ export class GameEngine {
     if (v.stats.domain === 'air') return v.grounded ? 'IDLE' : 'FLT';
     if (v.stats.domain === 'water') return v.speed < -0.5 ? 'REV' : 'JET';
     if (v.speed < -0.8) return 'R';
-    const mph = Math.round(Math.abs(v.speed) * 2.75);
-    if (mph < 26) return '1';
-    if (mph < 52) return '2';
-    if (mph < 82) return '3';
-    if (mph < 114) return '4';
-    if (mph < 146) return '5';
+    const mph = Math.round(Math.abs(v.speed) * 2.237);
+    if (mph < 18) return '1';
+    if (mph < 36) return '2';
+    if (mph < 56) return '3';
+    if (mph < 78) return '4';
+    if (mph < 102) return '5';
     return '6';
   }
 
@@ -1806,7 +1943,7 @@ export class GameEngine {
 
   private pushHudSnapshot(): void {
     const pos = this.getPlayerPos();
-    const speedMph = Math.round(Math.abs(pos.speed) * 2.75);
+    const speedMph = Math.round(Math.abs(pos.speed) * 2.237);
     const gear = this.computeGearLabel(this.playerVehicle);
     const isAiming =
       !this.playerVehicle &&
@@ -1814,12 +1951,23 @@ export class GameEngine {
       this.player.weapon !== 'fists' &&
       (this.rightMouseDown || this.scopeToggle);
 
+    const mpView = this.multiplayer.getView(pos.x, pos.z);
+
     const blips: MinimapBlip[] = [];
     blips.push({ x: PAY_N_SPRAY_POS.x, z: PAY_N_SPRAY_POS.z, kind: 'paynspray' });
     for (const ent of BUILDING_ENTRANCES) blips.push({ x: ent.x, z: ent.z, kind: 'interior' });
     for (const b of this.worldBoats) blips.push({ x: b.x, z: b.z, kind: 'boat' });
     for (const h of this.worldHelicopters) blips.push({ x: h.x, z: h.z, kind: 'fly_heli' });
     blips.push({ x: this.nova.x, z: this.nova.z, kind: 'nova' });
+    for (const rp of mpView.onlinePlayers) {
+      blips.push({
+        x: rp.x,
+        z: rp.z,
+        kind: 'remote_player',
+        color: rp.isFriend ? '#facc15' : '#00f5ff',
+        label: rp.name,
+      });
+    }
     for (const g of this.activities.raceGates) blips.push({ x: g.def.startX, z: g.def.startZ, kind: 'race' });
     for (const c of this.activities.collectibles) if (!c.collected) blips.push({ x: c.x, z: c.z, kind: 'cassette' });
     for (const tv of this.traffic.vehicles) if (!tv.destroyed) blips.push({ x: tv.x, z: tv.z, kind: 'traffic' });
@@ -1938,9 +2086,11 @@ export class GameEngine {
       dialogue: this.dialogue ? { ...this.dialogue } : null,
       banner: this.banner ? { ...this.banner } : null,
       hitmarkerAlpha: this.hitmarkerAlpha,
-      speedLinesAlpha: this.playerVehicle?.nitroActive ? 0.9 : Math.max(0, (speedMph - 108) / 55),
+      speedLinesAlpha: this.playerVehicle?.nitroActive ? 0.9 : Math.max(0, (speedMph - 78) / 48),
 
+      avatar: { ...this.avatar },
       nova: this.nova.getView(pos.x, pos.z),
+      multiplayer: mpView,
 
       playerX: this.currentInterior ? this.exteriorReturnPos?.x ?? 0 : pos.x,
       playerZ: this.currentInterior ? this.exteriorReturnPos?.z ?? 0 : pos.z,

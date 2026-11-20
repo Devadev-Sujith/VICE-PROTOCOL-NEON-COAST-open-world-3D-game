@@ -28,8 +28,9 @@ class ModelLibraryImpl {
   public isLoaded = false;
 
   constructor() {
+    const dracoUrl = new URL('draco/', window.location.href).href;
     const draco = new DRACOLoader();
-    draco.setDecoderPath('/draco/');
+    draco.setDecoderPath(dracoUrl);
     this.loader = new GLTFLoader();
     this.loader.setDRACOLoader(draco);
   }
@@ -37,12 +38,14 @@ class ModelLibraryImpl {
   public preloadAll(): void {
     if (this.loadingStarted) return;
     this.loadingStarted = true;
+    const ferrariUrl = new URL('models/ferrari.glb', window.location.href).href;
+    const soldierUrl = new URL('models/Soldier.glb', window.location.href).href;
 
     Promise.allSettled([
-      this.loader.loadAsync('/models/ferrari.glb').then((g) => {
+      this.loader.loadAsync(ferrariUrl).then((g) => {
         this.ferrariGltf = g;
       }),
-      this.loader.loadAsync('/models/Soldier.glb').then((g) => {
+      this.loader.loadAsync(soldierUrl).then((g) => {
         this.soldierGltf = g;
       }),
     ]).then(() => {

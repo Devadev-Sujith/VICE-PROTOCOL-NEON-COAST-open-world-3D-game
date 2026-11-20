@@ -31,6 +31,54 @@ export type WeaponId = 'fists' | 'pistol' | 'ak47' | 'sniper';
 
 export type WeatherMode = 'clear' | 'rain';
 
+export interface AvatarConfig {
+  name: string;
+  skinColor: number;
+  hairColor: number;
+  longHair: boolean;
+  jacketColor: number;
+  shirtColor: number;
+  pantsColor: number;
+  shoeColor: number;
+  hasShades: boolean;
+}
+
+export interface RemotePlayerView {
+  id: string;
+  name: string;
+  avatar: AvatarConfig;
+  x: number;
+  y: number;
+  z: number;
+  district: string;
+  distance: number;
+  inVehicle: boolean;
+  vehicleName: string;
+  isFriend: boolean;
+  activeMissionId: string | null;
+  activeMissionTitle: string | null;
+}
+
+export interface DirectMessage {
+  id: string;
+  fromId: string;
+  fromName: string;
+  toId: string;
+  text: string;
+  timestamp: number;
+}
+
+export interface MultiplayerView {
+  connected: boolean;
+  transportLabel: string;
+  localPlayerId: string;
+  onlinePlayers: RemotePlayerView[];
+  friendIds: string[];
+  friendNames: Record<string, string>;
+  dmsByFriend: Record<string, DirectMessage[]>;
+  unreadByFriend: Record<string, number>;
+}
+
 export interface OutfitDef {
   id: string;
   name: string;
@@ -335,25 +383,29 @@ export interface BannerEvent {
   duration: number;
 }
 
+export type MinimapBlipKind =
+  | 'traffic'
+  | 'police'
+  | 'mission'
+  | 'enemy'
+  | 'paynspray'
+  | 'race'
+  | 'cassette'
+  | 'waypoint'
+  | 'heli'
+  | 'event'
+  | 'interior'
+  | 'boat'
+  | 'fly_heli'
+  | 'nova'
+  | 'remote_player';
+
 export interface MinimapBlip {
   x: number;
   z: number;
-  kind:
-    | 'traffic'
-    | 'police'
-    | 'mission'
-    | 'enemy'
-    | 'paynspray'
-    | 'race'
-    | 'cassette'
-    | 'waypoint'
-    | 'heli'
-    | 'event'
-    | 'interior'
-    | 'boat'
-    | 'fly_heli'
-    | 'nova';
+  kind: MinimapBlipKind;
   color?: string;
+  label?: string;
 }
 
 export interface GpsNavInfo {
@@ -397,7 +449,7 @@ export interface HudSnapshot {
   driftScore: number;
   driftMultiplier: number;
   interactPrompt: string | null;
-  interactKind: 'vehicle' | 'interior_enter' | 'interior_exit' | 'shop' | 'npc' | 'nova' | 'vending' | null;
+  interactKind: 'vehicle' | 'interior_enter' | 'interior_exit' | 'shop' | 'npc' | 'nova' | 'vending' | 'remote_player' | null;
 
   // Weapon / Combat state
   weapon: WeaponId;
@@ -449,8 +501,10 @@ export interface HudSnapshot {
   hitmarkerAlpha: number;
   speedLinesAlpha: number;
 
-  // Sentient AI (NOVA)
+  // Player Avatar & Sentient AI (NOVA) & Online Multiplayer
+  avatar: AvatarConfig;
   nova: SentientAgentView;
+  multiplayer: MultiplayerView;
 
   // Minimap & Full Map
   playerX: number;

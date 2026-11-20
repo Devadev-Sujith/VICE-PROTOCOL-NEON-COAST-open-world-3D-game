@@ -3,38 +3,60 @@ import {
   Backpack,
   Battery,
   Car,
+  Check,
   CheckCircle2,
   ChevronLeft,
+  Copy,
   Cpu,
   Flag,
+  Globe,
   MessageCircle,
   Music2,
+  Navigation,
   Paintbrush,
   Send,
   Shirt,
   ShoppingBag,
   Signal,
   Target,
+  UserPlus,
+  Users,
   Wifi,
   X,
 } from 'lucide-react';
-import type { HudSnapshot, RadioStationId, VehicleType } from '../core/types';
+import type { HudSnapshot, RadioStationId, Vec2, VehicleType } from '../core/types';
 import { OUTFITS } from '../entities/PlayerController';
 import { CAMPAIGN_MISSIONS } from '../missions/missionData';
 import { STREET_RACES } from '../systems/WorldActivities';
 import { SpotifyConnectPanel } from './SpotifyWidget';
 
-export type PhoneAppId = 'home' | 'messages' | 'spotify' | 'missions' | 'bag' | 'wardrobe' | 'fleet' | 'hack' | 'shop';
+export type PhoneAppId =
+  | 'home'
+  | 'messages'
+  | 'players'
+  | 'spotify'
+  | 'missions'
+  | 'bag'
+  | 'wardrobe'
+  | 'fleet'
+  | 'hack'
+  | 'shop';
 
 interface SmartphoneProps {
   hud: HudSnapshot;
   initialApp?: PhoneAppId;
+  initialThreadId?: string | null;
   spotifyEmbedUrl: string;
   onSelectSpotify: (embedUrl: string, title: string) => void;
   onToggleSpotifyActive: (active: boolean) => void;
   onClose: () => void;
   onSendMessageToNova: (msg: string) => void;
   onSummonNova: () => void;
+  onAddFriend: (playerId: string) => void;
+  onSendFriendDm: (friendId: string, text: string) => void;
+  onMarkFriendRead: (friendId: string) => void;
+  onJoinCoopMission: (missionId: string) => void;
+  onSetWaypoint: (pt: Vec2, label: string) => void;
   onLaunchMission: (id: string) => void;
   onLaunchRace: (id: string) => void;
   onTriggerHack: (kind: 'traffic' | 'emp' | 'spoof') => void;
@@ -46,15 +68,25 @@ interface SmartphoneProps {
   onSetRadio: (st: RadioStationId) => void;
 }
 
+function hexCss(n: number): string {
+  return '#' + n.toString(16).padStart(6, '0');
+}
+
 export const Smartphone: React.FC<SmartphoneProps> = ({
   hud,
   initialApp = 'home',
+  initialThreadId = null,
   spotifyEmbedUrl,
   onSelectSpotify,
   onToggleSpotifyActive,
   onClose,
   onSendMessageToNova,
   onSummonNova,
+  onAddFriend,
+  onSendFriendDm,
+  onMarkFriendRead,
+  onJoinCoopMission,
+  onSetWaypoint,
   onLaunchMission,
   onLaunchRace,
   onTriggerHack,
@@ -66,37 +98,97 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
   onSetRadio,
 }) => {
   const [app, setApp] = useState<PhoneAppId>(initialApp);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(initialThreadId);
   const [dmInput, setDmInput] = useState('');
+  const [copiedLink, setCopiedLink] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setApp(initialApp);
-  }, [initialApp]);
+    if (initialApp === 'messages') {
+      setActiveThreadId(initialThreadId ?? null);
+    }
+  }, [initialApp, initialThreadId]);
+
+  const activeFriendMsgs =
+    activeThreadId && activeThreadId !== 'nova' ? hud.multiplayer.dmsByFriend[activeThreadId] || [] : [];
 
   useEffect(() => {
-    if (app === 'messages' && chatScrollRef.current) {
+    if (app === 'messages' && activeThreadId && activeThreadId !== 'nova') {
+      if ((hud.multiplayer.unreadByFriend[activeThreadId] || 0) > 0) {
+        onMarkFriendRead(activeThreadId);
+      }
+    }
+  }, [app, activeThreadId, activeFriendMsgs.length]);
+
+  useEffect(() => {
+    if (app === 'messages' && activeThreadId && chatScrollRef.current) {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
     }
-  }, [app, hud.nova.history.length, hud.nova.thinking]);
+  }, [app, activeThreadId, hud.nova.history.length, hud.nova.thinking, activeFriendMsgs.length]);
 
-  const sendDm = (overrideText?: string) => {
+  const sendNovaDm = (overrideText?: string) => {
     const txt = (overrideText ?? dmInput).trim();
     if (!txt || hud.nova.thinking) return;
     onSendMessageToNova(txt);
     if (!overrideText) setDmInput('');
   };
 
+  const sendFriendText = (friendId: string, overrideText?: string) => {
+    const txt = (overrideText ?? dmInput).trim();
+    if (!txt) return;
+    onSendFriendDm(friendId, txt);
+    if (!overrideText) setDmInput('');
+  };
+
+  const handleCopyInviteLink = () => {
+    try {
+      navigator.clipboard?.writeText(window.location.href);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2200);
+    } catch {
+      // ignore clipboard errors
+    }
+  };
+
+  const totalUnreadDms = Object.values(hud.multiplayer.unreadByFriend).reduce((a, b) => a + b, 0);
+  const onlineCount = hud.multiplayer.onlinePlayers.length;
   const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   const apps: { id: PhoneAppId; label: string; bg: string; icon: React.ReactNode; badge?: string }[] = [
-    { id: 'messages', label: 'Messages', bg: 'linear-gradient(135deg, #ec4899, #8b5cf6)', icon: <MessageCircle size={24} />, badge: 'Nova' },
-    { id: 'spotify', label: 'Spotify', bg: 'linear-gradient(135deg, #1db954, #15803d)', icon: <Music2 size={24} /> },
-    { id: 'missions', label: 'To-Do Ops', bg: 'linear-gradient(135deg, #f59e0b, #ea580c)', icon: <Target size={24} />, badge: `${hud.completedMissionIds.length}/4` },
-    { id: 'fleet', label: 'Garage', bg: 'linear-gradient(135deg, #0ea5e9, #2563eb)', icon: <Car size={24} /> },
-    { id: 'bag', label: 'My Bag', bg: 'linear-gradient(135deg, #10b981, #059669)', icon: <Backpack size={24} />, badge: `${hud.inventory.reduce((a, b) => a + b.qty, 0)}` },
-    { id: 'wardrobe', label: 'Outfits', bg: 'linear-gradient(135deg, #a855f7, #ec4899)', icon: <Shirt size={24} /> },
-    { id: 'hack', label: 'Net-Hack', bg: 'linear-gradient(135deg, #06b6d4, #0284c7)', icon: <Cpu size={24} /> },
-    { id: 'shop', label: 'Upgrades', bg: 'linear-gradient(135deg, #f43f5e, #be123c)', icon: <ShoppingBag size={24} /> },
+    {
+      id: 'messages',
+      label: 'Messages',
+      bg: 'linear-gradient(135deg, #ec4899, #8b5cf6)',
+      icon: <MessageCircle size={23} />,
+      badge: totalUnreadDms > 0 ? `${totalUnreadDms}` : undefined,
+    },
+    {
+      id: 'players',
+      label: 'Players',
+      bg: 'linear-gradient(135deg, #00c8ff, #0284c7)',
+      icon: <Users size={23} />,
+      badge: `${onlineCount + 1}`,
+    },
+    { id: 'spotify', label: 'Spotify', bg: 'linear-gradient(135deg, #1db954, #15803d)', icon: <Music2 size={23} /> },
+    {
+      id: 'missions',
+      label: 'To-Do Ops',
+      bg: 'linear-gradient(135deg, #f59e0b, #ea580c)',
+      icon: <Target size={23} />,
+      badge: `${hud.completedMissionIds.length}/4`,
+    },
+    { id: 'fleet', label: 'Garage', bg: 'linear-gradient(135deg, #3b82f6, #1d4ed8)', icon: <Car size={23} /> },
+    {
+      id: 'bag',
+      label: 'My Bag',
+      bg: 'linear-gradient(135deg, #10b981, #059669)',
+      icon: <Backpack size={23} />,
+      badge: `${hud.inventory.reduce((a, b) => a + b.qty, 0)}`,
+    },
+    { id: 'wardrobe', label: 'Outfits', bg: 'linear-gradient(135deg, #a855f7, #ec4899)', icon: <Shirt size={23} /> },
+    { id: 'hack', label: 'Net-Hack', bg: 'linear-gradient(135deg, #06b6d4, #0891b2)', icon: <Cpu size={23} /> },
+    { id: 'shop', label: 'Upgrades', bg: 'linear-gradient(135deg, #f43f5e, #be123c)', icon: <ShoppingBag size={23} /> },
   ];
 
   const garageCars: { type: VehicleType; label: string; tag: string; color: string }[] = [
@@ -116,6 +208,24 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
     { key: 'hack' as const, name: 'Net-Hack Quantum Chip', desc: '-18% cooldown & wider EMP', lvl: hud.upgrades.hackLevel, costs: [4500, 9000, 15000] },
   ];
 
+  const activeFriendOnline =
+    activeThreadId && activeThreadId !== 'nova'
+      ? hud.multiplayer.onlinePlayers.find((p) => p.id === activeThreadId) || null
+      : null;
+  const activeFriendName =
+    activeThreadId && activeThreadId !== 'nova'
+      ? activeFriendOnline?.name || hud.multiplayer.friendNames[activeThreadId] || 'Friend'
+      : '';
+
+  const headerTitle =
+    app === 'messages'
+      ? activeThreadId === 'nova'
+        ? 'Nova'
+        : activeThreadId
+        ? activeFriendName
+        : 'Messages'
+      : apps.find((a) => a.id === app)?.label || '';
+
   return (
     <div
       className="animate-pop"
@@ -123,8 +233,8 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
         position: 'fixed',
         right: 22,
         bottom: 74,
-        width: 342,
-        height: 600,
+        width: 344,
+        height: 608,
         maxHeight: 'calc(100vh - 104px)',
         borderRadius: 42,
         background: 'linear-gradient(165deg, #0b0f1e 0%, #16112d 55%, #0a1426 100%)',
@@ -146,14 +256,13 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
           fontSize: 11,
           fontWeight: 800,
           color: '#f8fafc',
-          position: 'relative',
         }}
       >
         <span>{timeStr}</span>
         <div style={{ width: 84, height: 20, borderRadius: 99, background: '#03050a', border: '1px solid rgba(255,255,255,0.08)' }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
           <Signal size={12} />
-          <Wifi size={12} />
+          <Wifi size={12} color={hud.multiplayer.connected ? '#4ade80' : '#facc15'} />
           <Battery size={14} color="#4ade80" />
         </div>
       </div>
@@ -171,7 +280,13 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
           }}
         >
           <button
-            onClick={() => setApp('home')}
+            onClick={() => {
+              if (app === 'messages' && activeThreadId !== null) {
+                setActiveThreadId(null);
+              } else {
+                setApp('home');
+              }
+            }}
             style={{
               background: 'none',
               border: 'none',
@@ -184,10 +299,10 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
               gap: 3,
             }}
           >
-            <ChevronLeft size={16} /> Home
+            <ChevronLeft size={16} /> {app === 'messages' && activeThreadId !== null ? 'Chats' : 'Home'}
           </button>
           <span style={{ fontSize: 12.5, fontWeight: 900, color: '#fff', letterSpacing: '0.04em' }}>
-            {app === 'messages' ? 'Nova' : apps.find((a) => a.id === app)?.label}
+            {headerTitle}
           </span>
           <button
             onClick={onClose}
@@ -202,11 +317,11 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
       <div style={{ flex: 1, overflowY: 'auto', padding: app === 'messages' ? 0 : 14, display: 'flex', flexDirection: 'column' }}>
         {/* === PHONE HOME SCREEN === */}
         {app === 'home' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1 }}>
-            {/* Wallpaper Lock-Style Widget */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 13, flex: 1 }}>
+            {/* Lock-Style Widget with Player's Custom Avatar Name + Live World Status */}
             <div
               style={{
-                padding: '14px 16px',
+                padding: '13px 15px',
                 borderRadius: 20,
                 background: 'linear-gradient(135deg, rgba(255, 42, 133, 0.25), rgba(0, 245, 255, 0.16))',
                 border: '1px solid rgba(255,255,255,0.16)',
@@ -214,8 +329,12 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                  <div style={{ fontSize: 10, fontWeight: 800, color: '#00f5ff', letterSpacing: '0.14em' }}>NEON COAST</div>
-                  <div style={{ fontSize: 22, fontWeight: 950, color: '#22c55e', marginTop: 2 }}>${hud.cash.toLocaleString()}</div>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: '#00f5ff', letterSpacing: '0.12em' }}>
+                    {hud.avatar.name.toUpperCase()} • NEON COAST
+                  </div>
+                  <div style={{ fontSize: 22, fontWeight: 950, color: '#22c55e', marginTop: 1 }}>
+                    ${hud.cash.toLocaleString()}
+                  </div>
                 </div>
                 <button
                   onClick={onClose}
@@ -224,17 +343,25 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
                   <X size={14} />
                 </button>
               </div>
-              <div style={{ fontSize: 11, color: '#e2e8f0', marginTop: 6 }}>
-                {hud.spotifyActive ? `♫ Spotify: ${hud.spotifyTitle}` : `♫ ${hud.radioLabel}`}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10.5, color: '#e2e8f0', marginTop: 6 }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 165 }}>
+                  {hud.spotifyActive ? `♫ ${hud.spotifyTitle}` : `♫ ${hud.radioLabel}`}
+                </span>
+                <span style={{ color: '#4ade80', fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <Globe size={11} /> {onlineCount + 1} ONLINE
+                </span>
               </div>
             </div>
 
-            {/* App Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, padding: '0 4px' }}>
+            {/* 3x3 Smartphone App Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, padding: '2px 8px' }}>
               {apps.map((item) => (
                 <button
                   key={item.id}
-                  onClick={() => setApp(item.id)}
+                  onClick={() => {
+                    if (item.id === 'messages') setActiveThreadId(null);
+                    setApp(item.id);
+                  }}
                   style={{
                     background: 'none',
                     border: 'none',
@@ -265,12 +392,12 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
                       style={{
                         position: 'absolute',
                         top: -4,
-                        right: 2,
+                        right: 12,
                         background: '#ff2a55',
                         color: '#fff',
                         fontSize: 9,
                         fontWeight: 900,
-                        padding: '1px 5px',
+                        padding: '1px 6px',
                         borderRadius: 99,
                       }}
                     >
@@ -282,12 +409,15 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
               ))}
             </div>
 
-            {/* Recent Nova DM Notification Preview Card (100% Real-Life Texting Look!) */}
+            {/* Bottom Notification Preview -> opens Messages Chat List */}
             <div
-              onClick={() => setApp('messages')}
+              onClick={() => {
+                setActiveThreadId(null);
+                setApp('messages');
+              }}
               style={{
                 marginTop: 'auto',
-                padding: '11px 13px',
+                padding: '10px 12px',
                 borderRadius: 16,
                 background: 'rgba(255,255,255,0.08)',
                 border: '1px solid rgba(244, 114, 182, 0.35)',
@@ -295,20 +425,185 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
-                <span style={{ fontSize: 12, fontWeight: 900, color: '#f472b6' }}>Nova • Active now</span>
-                <span style={{ fontSize: 10, color: '#94a3b8' }}>{hud.nova.distanceToPlayer}m away</span>
+                <span style={{ fontSize: 11.5, fontWeight: 900, color: '#f472b6' }}>
+                  Messages • Nova & {hud.multiplayer.friendIds.length} Friend{hud.multiplayer.friendIds.length === 1 ? '' : 's'}
+                </span>
+                <span style={{ fontSize: 10, color: '#94a3b8' }}>Open</span>
               </div>
-              <div style={{ fontSize: 11.5, color: '#e2e8f0', lineHeight: 1.35 }}>
-                {hud.nova.latestSpeech.length > 82 ? hud.nova.latestSpeech.slice(0, 82) + '…' : hud.nova.latestSpeech}
+              <div style={{ fontSize: 11, color: '#e2e8f0', lineHeight: 1.32 }}>
+                Nova: {hud.nova.latestSpeech.length > 68 ? hud.nova.latestSpeech.slice(0, 68) + '…' : hud.nova.latestSpeech}
               </div>
             </div>
           </div>
         )}
 
-        {/* === REAL MESSAGES DM APP — NOVA (ZERO AI/API/MODEL CLUTTER!) === */}
-        {app === 'messages' && (
+        {/* === MESSAGES APP: CHAT LIST + NOVA DM + REAL-TIME MULTIPLAYER FRIEND DMs === */}
+        {app === 'messages' && activeThreadId === null && (
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-            {/* Contact Sub-header */}
+            <div style={{ padding: '10px 14px 6px', fontSize: 10, fontWeight: 900, color: '#94a3b8', letterSpacing: '0.1em' }}>
+              CHATS ({1 + hud.multiplayer.friendIds.length})
+            </div>
+
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {/* Nova Always in Chat List */}
+              <div
+                onClick={() => setActiveThreadId('nova')}
+                style={{
+                  padding: '11px 14px',
+                  borderBottom: '1px solid rgba(255,255,255,0.07)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 11,
+                  cursor: 'pointer',
+                  background: 'rgba(236, 72, 153, 0.06)',
+                }}
+              >
+                <div
+                  style={{
+                    width: 42,
+                    height: 42,
+                    borderRadius: 99,
+                    background: 'linear-gradient(135deg, #ec4899, #8b5cf6)',
+                    display: 'grid',
+                    placeItems: 'center',
+                    fontWeight: 950,
+                    fontSize: 17,
+                    color: '#fff',
+                    flexShrink: 0,
+                  }}
+                >
+                  N
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 13.5, fontWeight: 900, color: '#fff', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                      Nova <span style={{ width: 7, height: 7, borderRadius: 99, background: '#22c55e' }} />
+                    </span>
+                    <span style={{ fontSize: 10, color: '#94a3b8' }}>{hud.nova.distanceToPlayer}m</span>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: '#cbd5e1', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 2 }}>
+                    {hud.nova.latestSpeech}
+                  </div>
+                </div>
+              </div>
+
+              {/* Added Online Friends Chat List! */}
+              {hud.multiplayer.friendIds.map((fid) => {
+                const online = hud.multiplayer.onlinePlayers.find((p) => p.id === fid);
+                const name = online?.name || hud.multiplayer.friendNames[fid] || 'Player';
+                const msgs = hud.multiplayer.dmsByFriend[fid] || [];
+                const lastMsg = msgs[msgs.length - 1];
+                const unread = hud.multiplayer.unreadByFriend[fid] || 0;
+                const accentHex = online ? hexCss(online.avatar.shirtColor) : '#0ea5e9';
+
+                return (
+                  <div
+                    key={fid}
+                    onClick={() => {
+                      onMarkFriendRead(fid);
+                      setActiveThreadId(fid);
+                    }}
+                    style={{
+                      padding: '11px 14px',
+                      borderBottom: '1px solid rgba(255,255,255,0.07)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 11,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 42,
+                        height: 42,
+                        borderRadius: 99,
+                        background: `linear-gradient(135deg, ${accentHex}, #0f172a)`,
+                        border: `1.5px solid ${online ? '#22c55e' : 'rgba(255,255,255,0.2)'}`,
+                        display: 'grid',
+                        placeItems: 'center',
+                        fontWeight: 950,
+                        fontSize: 16,
+                        color: '#fff',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {name.charAt(0).toUpperCase()}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: 13.5, fontWeight: 900, color: '#fff', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                          {name}
+                          <span
+                            style={{
+                              width: 7,
+                              height: 7,
+                              borderRadius: 99,
+                              background: online ? '#22c55e' : '#64748b',
+                            }}
+                          />
+                        </span>
+                        <span style={{ fontSize: 10, color: online ? '#38bdf8' : '#64748b', fontWeight: 700 }}>
+                          {online ? `${online.distance}m` : 'Offline'}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                        <span style={{ fontSize: 11.5, color: '#94a3b8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {lastMsg
+                            ? `${lastMsg.fromId === hud.multiplayer.localPlayerId ? 'You: ' : ''}${lastMsg.text}`
+                            : 'Tap to start chatting!'}
+                        </span>
+                        {unread > 0 && (
+                          <span
+                            style={{
+                              background: '#0ea5e9',
+                              color: '#fff',
+                              fontSize: 10,
+                              fontWeight: 900,
+                              padding: '1px 6px',
+                              borderRadius: 99,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {unread}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {hud.multiplayer.friendIds.length === 0 && (
+                <div style={{ padding: '22px 18px', textAlign: 'center', color: '#94a3b8', fontSize: 11.5, lineHeight: 1.5 }}>
+                  No online friends added yet! Meet players in the city or open the <strong style={{ color: '#00f5ff' }}>Players</strong> app to add friends and chat live.
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+              <button
+                className="btn-secondary"
+                onClick={() => setApp('players')}
+                style={{
+                  width: '100%',
+                  padding: '8px',
+                  borderRadius: 10,
+                  fontSize: 11,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                }}
+              >
+                <UserPlus size={14} color="#00f5ff" /> FIND & ADD ONLINE PLAYERS ({onlineCount})
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* === MESSAGES THREAD: NOVA === */}
+        {app === 'messages' && activeThreadId === 'nova' && (
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <div
               style={{
                 padding: '8px 14px',
@@ -361,7 +656,6 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
               </button>
             </div>
 
-            {/* DM Message Bubbles */}
             <div ref={chatScrollRef} style={{ flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
               {hud.nova.history
                 .filter((m) => m.role !== 'thought')
@@ -394,18 +688,11 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
               )}
             </div>
 
-            {/* Quick Human Text Chips */}
             <div style={{ padding: '6px 10px 4px', display: 'flex', gap: 5, flexWrap: 'wrap', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-              {[
-                'Come with me!',
-                'Café date? ☕',
-                'Dance for me! 💃',
-                'Hit the Mall 🍔',
-                'Wait here',
-              ].map((txt) => (
+              {['Come with me!', 'Café date? ☕', 'Dance for me! 💃', 'Hit the Mall 🍔', 'Wait here'].map((txt) => (
                 <button
                   key={txt}
-                  onClick={() => sendDm(txt)}
+                  onClick={() => sendNovaDm(txt)}
                   style={{
                     background: 'rgba(255,255,255,0.08)',
                     border: '1px solid rgba(255,255,255,0.14)',
@@ -421,14 +708,13 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
               ))}
             </div>
 
-            {/* Text Input Bar */}
             <div style={{ padding: '8px 10px 12px', display: 'flex', gap: 6 }}>
               <input
                 type="text"
                 value={dmInput}
                 onChange={(e) => setDmInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') sendDm();
+                  if (e.key === 'Enter') sendNovaDm();
                 }}
                 placeholder="iMessage Nova..."
                 style={{
@@ -443,7 +729,7 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
                 }}
               />
               <button
-                onClick={() => sendDm()}
+                onClick={() => sendNovaDm()}
                 style={{
                   width: 34,
                   height: 34,
@@ -459,6 +745,304 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
                 <Send size={14} />
               </button>
             </div>
+          </div>
+        )}
+
+        {/* === MESSAGES THREAD: LIVE MULTIPLAYER FRIEND DM === */}
+        {app === 'messages' && activeThreadId !== null && activeThreadId !== 'nova' && (
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <div
+              style={{
+                padding: '8px 14px',
+                background: 'rgba(255,255,255,0.03)',
+                borderBottom: '1px solid rgba(255,255,255,0.08)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 900, color: '#fff', display: 'flex', alignItems: 'center', gap: 5 }}>
+                  {activeFriendName}
+                  <span style={{ width: 7, height: 7, borderRadius: 99, background: activeFriendOnline ? '#22c55e' : '#64748b' }} />
+                </div>
+                <div style={{ fontSize: 10, color: '#94a3b8' }}>
+                  {activeFriendOnline
+                    ? `${activeFriendOnline.district} • ${activeFriendOnline.distance}m${activeFriendOnline.inVehicle ? ` • ${activeFriendOnline.vehicleName}` : ''}`
+                    : 'Currently offline'}
+                </div>
+              </div>
+              {activeFriendOnline && (
+                <button
+                  onClick={() => {
+                    onSetWaypoint({ x: activeFriendOnline.x, z: activeFriendOnline.z }, `FRIEND: ${activeFriendName.toUpperCase()}`);
+                    onClose();
+                  }}
+                  style={{
+                    background: 'rgba(0, 245, 255, 0.16)',
+                    border: '1px solid rgba(0, 245, 255, 0.5)',
+                    color: '#67e8f9',
+                    borderRadius: 99,
+                    padding: '4px 9px',
+                    fontSize: 9.5,
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}
+                >
+                  <Navigation size={10} /> GPS
+                </button>
+              )}
+            </div>
+
+            <div ref={chatScrollRef} style={{ flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {activeFriendMsgs.length === 0 ? (
+                <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 11.5, padding: '26px 10px' }}>
+                  You & <strong style={{ color: '#fff' }}>{activeFriendName}</strong> are now friends in Neon Coast! Send a live message below.
+                </div>
+              ) : (
+                activeFriendMsgs.map((m) => {
+                  const mine = m.fromId === hud.multiplayer.localPlayerId;
+                  return (
+                    <div
+                      key={m.id}
+                      style={{
+                        alignSelf: mine ? 'flex-end' : 'flex-start',
+                        maxWidth: '82%',
+                        padding: '8px 12px',
+                        borderRadius: mine ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                        background: mine ? 'linear-gradient(135deg, #0ea5e9, #2563eb)' : 'rgba(255,255,255,0.12)',
+                        color: '#fff',
+                        fontSize: 12,
+                        lineHeight: 1.38,
+                      }}
+                    >
+                      {m.text}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div style={{ padding: '6px 10px 4px', display: 'flex', gap: 5, flexWrap: 'wrap', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+              {['Meet at Ocean Drive!', 'Hop in my car!', 'Let’s do a Heist!', 'Sunset Café?'].map((txt) => (
+                <button
+                  key={txt}
+                  onClick={() => sendFriendText(activeThreadId, txt)}
+                  style={{
+                    background: 'rgba(255,255,255,0.08)',
+                    border: '1px solid rgba(255,255,255,0.14)',
+                    color: '#e2e8f0',
+                    borderRadius: 99,
+                    padding: '3px 8px',
+                    fontSize: 10,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {txt}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ padding: '8px 10px 12px', display: 'flex', gap: 6 }}>
+              <input
+                type="text"
+                value={dmInput}
+                onChange={(e) => setDmInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') sendFriendText(activeThreadId);
+                }}
+                placeholder={`Message ${activeFriendName}...`}
+                style={{
+                  flex: 1,
+                  background: 'rgba(5, 8, 20, 0.85)',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  borderRadius: 99,
+                  padding: '8px 13px',
+                  color: '#fff',
+                  fontSize: 12,
+                  outline: 'none',
+                }}
+              />
+              <button
+                onClick={() => sendFriendText(activeThreadId)}
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: 99,
+                  background: '#0ea5e9',
+                  border: 'none',
+                  color: '#fff',
+                  display: 'grid',
+                  placeItems: 'center',
+                  cursor: 'pointer',
+                }}
+              >
+                <Send size={14} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* === PLAYERS / ONLINE WORLD & ADD FRIEND APP === */}
+        {app === 'players' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div
+              style={{
+                padding: '10px 12px',
+                borderRadius: 12,
+                background: 'rgba(0, 245, 255, 0.1)',
+                border: '1px solid rgba(0, 245, 255, 0.35)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 7,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 10.5, fontWeight: 900, color: '#00f5ff', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  <Globe size={12} color={hud.multiplayer.connected ? '#22c55e' : '#facc15'} />
+                  {hud.multiplayer.transportLabel}
+                </span>
+              </div>
+              <div style={{ fontSize: 10.5, color: '#cbd5e1' }}>
+                Signed in as <strong style={{ color: '#fff' }}>{hud.avatar.name}</strong> • Anyone who opens the link joins this exact single world!
+              </div>
+              <button
+                className="btn-secondary"
+                onClick={handleCopyInviteLink}
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: 8,
+                  fontSize: 10.5,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                }}
+              >
+                {copiedLink ? <Check size={12} color="#22c55e" /> : <Copy size={12} color="#00f5ff" />}
+                {copiedLink ? 'LINK COPIED — SHARE WITH FRIENDS!' : 'COPY LIVE WORLD INVITE LINK'}
+              </button>
+            </div>
+
+            <div style={{ fontSize: 10.5, fontWeight: 900, color: '#94a3b8', letterSpacing: '0.08em' }}>
+              PLAYERS IN NEON COAST ({onlineCount})
+            </div>
+
+            {onlineCount === 0 ? (
+              <div
+                style={{
+                  padding: '24px 14px',
+                  borderRadius: 12,
+                  background: 'rgba(255,255,255,0.04)',
+                  textAlign: 'center',
+                  color: '#94a3b8',
+                  fontSize: 11.5,
+                  lineHeight: 1.5,
+                }}
+              >
+                You’re the first player in Neon Coast right now! Share the invite link above (or open it in a second tab to test!)—new players spawn right beside you live.
+              </div>
+            ) : (
+              hud.multiplayer.onlinePlayers.map((rp) => (
+                <div
+                  key={rp.id}
+                  style={{
+                    padding: '10px 11px',
+                    borderRadius: 12,
+                    background: rp.isFriend ? 'rgba(250, 204, 21, 0.1)' : 'rgba(255,255,255,0.06)',
+                    border: `1px solid ${rp.isFriend ? 'rgba(250, 204, 21, 0.45)' : 'rgba(255,255,255,0.12)'}`,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 7,
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div
+                        style={{
+                          width: 30,
+                          height: 30,
+                          borderRadius: 99,
+                          background: hexCss(rp.avatar.shirtColor),
+                          display: 'grid',
+                          placeItems: 'center',
+                          fontWeight: 950,
+                          fontSize: 13,
+                          color: '#fff',
+                        }}
+                      >
+                        {rp.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 12.5, fontWeight: 900, color: '#fff' }}>
+                          {rp.isFriend ? `★ ${rp.name}` : rp.name}
+                        </div>
+                        <div style={{ fontSize: 10, color: '#94a3b8' }}>
+                          {rp.district} • {rp.distance}m • {rp.inVehicle ? rp.vehicleName : 'On Foot'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {rp.activeMissionTitle && (
+                    <div style={{ fontSize: 10, fontWeight: 800, color: '#facc15' }}>
+                      Running Op: {rp.activeMissionTitle}
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                    {rp.isFriend ? (
+                      <button
+                        className="btn-primary"
+                        onClick={() => {
+                          onMarkFriendRead(rp.id);
+                          setActiveThreadId(rp.id);
+                          setApp('messages');
+                        }}
+                        style={{ flex: 1, padding: '5px 8px', borderRadius: 7, fontSize: 10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
+                      >
+                        <MessageCircle size={11} /> MESSAGE
+                      </button>
+                    ) : (
+                      <button
+                        className="btn-primary"
+                        onClick={() => onAddFriend(rp.id)}
+                        style={{ flex: 1, padding: '5px 8px', borderRadius: 7, fontSize: 10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
+                      >
+                        <UserPlus size={11} /> ADD FRIEND
+                      </button>
+                    )}
+
+                    <button
+                      className="btn-secondary"
+                      onClick={() => {
+                        onSetWaypoint({ x: rp.x, z: rp.z }, `PLAYER: ${rp.name.toUpperCase()}`);
+                        onClose();
+                      }}
+                      style={{ padding: '5px 8px', borderRadius: 7, fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                    >
+                      <Navigation size={11} /> GPS
+                    </button>
+
+                    {rp.activeMissionId && (
+                      <button
+                        className="btn-secondary"
+                        onClick={() => {
+                          onJoinCoopMission(rp.activeMissionId!);
+                          onClose();
+                        }}
+                        style={{ padding: '5px 8px', borderRadius: 7, fontSize: 10, borderColor: '#facc15', color: '#fde047' }}
+                      >
+                        JOIN CO-OP
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         )}
 
@@ -511,7 +1095,7 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
         {app === 'missions' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
             <div style={{ fontSize: 10.5, fontWeight: 900, color: '#facc15', letterSpacing: '0.1em' }}>
-              HEIST TO-DO CHECKLIST ({hud.completedMissionIds.length}/4)
+              HEIST TO-DO CHECKLIST ({hud.completedMissionIds.length}/4) • CO-OP ENABLED
             </div>
             {CAMPAIGN_MISSIONS.map((m) => {
               const done = hud.completedMissionIds.includes(m.id);
@@ -628,7 +1212,7 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
         {/* === WARDROBE / DRESS CHANGE APP === */}
         {app === 'wardrobe' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ fontSize: 11, color: '#cbd5e1' }}>Swap outfits anytime or walk into VICE Drip Clothing Store on Ocean Drive!</div>
+            <div style={{ fontSize: 11, color: '#cbd5e1' }}>Swap outfits anytime—changes sync live to every player in the world!</div>
             {OUTFITS.map((o) => {
               const owned = hud.ownedOutfitIds.includes(o.id);
               const equipped = hud.equippedOutfitId === o.id;
@@ -765,7 +1349,10 @@ export const Smartphone: React.FC<SmartphoneProps> = ({
 
       {/* Bottom Realistic Phone Home Gesture Bar */}
       <div
-        onClick={() => setApp('home')}
+        onClick={() => {
+          setActiveThreadId(null);
+          setApp('home');
+        }}
         style={{
           padding: '9px 0 11px',
           display: 'flex',

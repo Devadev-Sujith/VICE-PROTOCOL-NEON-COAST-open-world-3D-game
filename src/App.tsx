@@ -18,6 +18,7 @@ export function App() {
 
   const [phoneOpen, setPhoneOpen] = useState(false);
   const [phoneInitialApp, setPhoneInitialApp] = useState<PhoneAppId>('home');
+  const [phoneInitialThread, setPhoneInitialThread] = useState<string | null>(null);
   const [mapOpen, setMapOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [carSpotifyOpen, setCarSpotifyOpen] = useState(false);
@@ -38,12 +39,13 @@ export function App() {
         setCarSpotifyOpen(false);
         setShopVenue(venue);
       },
-      onOpenPhoneMessages: () => {
+      onOpenPhoneMessages: (threadId) => {
         setMapOpen(false);
         setSettingsOpen(false);
         setCarSpotifyOpen(false);
         setShopVenue(null);
         setPhoneInitialApp('messages');
+        setPhoneInitialThread(threadId ?? null);
         setPhoneOpen(true);
       },
     });
@@ -131,6 +133,10 @@ export function App() {
 
       {hud && hud.mode === 'title' && eng && (
         <TitleScreen
+          avatar={hud.avatar}
+          onlineCount={hud.multiplayer.onlinePlayers.length}
+          mpConnected={hud.multiplayer.connected}
+          onChangeAvatar={(cfg) => eng.setAvatarConfig(cfg)}
           onStartCampaign={() => eng.startCampaign()}
           onStartFreeRoam={() => eng.startFreeRoam()}
         />
@@ -199,17 +205,23 @@ export function App() {
             </div>
           )}
 
-          {/* Realistic Smartphone UI (Messages w/ Nova, Spotify, Missions To-Do, Bag, Outfits, Fleet, Net-Hack) */}
+          {/* Realistic Smartphone UI (Messages w/ Nova & Friends, Online Players, Spotify, Missions To-Do, Bag, Outfits, Fleet, Net-Hack) */}
           {phoneOpen && (
             <Smartphone
               hud={hud}
               initialApp={phoneInitialApp}
+              initialThreadId={phoneInitialThread}
               spotifyEmbedUrl={spotifyEmbedUrl}
               onSelectSpotify={handleSelectSpotify}
               onToggleSpotifyActive={handleToggleSpotifyActive}
               onClose={() => setPhoneOpen(false)}
               onSendMessageToNova={(msg) => void eng.sendMessageToNova(msg)}
               onSummonNova={() => eng.summonNovaNearby()}
+              onAddFriend={(pid) => eng.addFriend(pid)}
+              onSendFriendDm={(fid, txt) => eng.sendFriendDm(fid, txt)}
+              onMarkFriendRead={(fid) => eng.markFriendDmRead(fid)}
+              onJoinCoopMission={(mid) => eng.joinCoopMission(mid)}
+              onSetWaypoint={(pt, lbl) => eng.setCustomWaypoint(pt, lbl)}
               onLaunchMission={(id) => eng.launchMission(id)}
               onLaunchRace={(id) => eng.launchStreetRace(id)}
               onTriggerHack={(k) => eng.activateNetHack(k)}

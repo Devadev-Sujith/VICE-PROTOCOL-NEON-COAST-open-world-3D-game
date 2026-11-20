@@ -140,6 +140,17 @@ export const FullMapModal: React.FC<FullMapModalProps> = ({
         ctx.fillStyle = '#fbcfe8';
         ctx.font = 'bold 9.5px sans-serif';
         ctx.fillText('NOVA', px, py + 15);
+      } else if (b.kind === 'remote_player') {
+        ctx.fillStyle = b.color || '#00f5ff';
+        ctx.beginPath();
+        ctx.arc(px, py, 7, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2.2;
+        ctx.stroke();
+        ctx.fillStyle = b.color === '#facc15' ? '#fef08a' : '#a5f3fc';
+        ctx.font = 'bold 10px sans-serif';
+        ctx.fillText((b.label || 'PLAYER').toUpperCase(), px, py + 16);
       } else if (b.kind === 'police') {
         ctx.fillStyle = '#ef4444';
         ctx.beginPath();
@@ -191,7 +202,13 @@ export const FullMapModal: React.FC<FullMapModalProps> = ({
     const wx = worldMin + nx * worldSpan;
     const wz = worldMin + ny * worldSpan;
 
-    // Snap to a landmark if clicked nearby!
+    // Snap to an online remote player or landmark if clicked nearby!
+    const nearRemote = hud.multiplayer.onlinePlayers.find((p) => Math.hypot(p.x - wx, p.z - wz) < 22);
+    if (nearRemote) {
+      onSetWaypoint({ x: nearRemote.x, z: nearRemote.z }, `PLAYER: ${nearRemote.name.toUpperCase()}`);
+      return;
+    }
+
     const nearLm = CITY_LANDMARKS.find((l) => Math.hypot(l.x - wx, l.z - wz) < 22);
     if (nearLm) {
       setSelected(nearLm);

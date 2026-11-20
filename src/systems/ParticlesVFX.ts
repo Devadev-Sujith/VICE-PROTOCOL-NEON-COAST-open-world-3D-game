@@ -26,19 +26,58 @@ interface HydrantJet {
   timer: number;
 }
 
+interface BloodPool {
+  mesh: THREE.Mesh;
+  age: number;
+  maxScale: number;
+  life: number;
+}
+
+let cachedBloodTex: THREE.CanvasTexture | null = null;
+function getBloodPoolTexture(): THREE.CanvasTexture {
+  if (cachedBloodTex) return cachedBloodTex;
+  const c = document.createElement('canvas');
+  c.width = 128;
+  c.height = 128;
+  const ctx = c.getContext('2d')!;
+  // Organic multi-lobed dark crimson blood puddle!
+  const lobes = [
+    [64, 64, 42],
+    [48, 56, 26],
+    [82, 70, 24],
+    [58, 82, 22],
+    [72, 46, 20],
+  ];
+  for (const [lx, ly, r] of lobes) {
+    const grad = ctx.createRadialGradient(lx, ly, r * 0.2, lx, ly, r);
+    grad.addColorStop(0, 'rgba(95, 6, 12, 0.96)');
+    grad.addColorStop(0.7, 'rgba(138, 12, 20, 0.88)');
+    grad.addColorStop(1, 'rgba(138, 12, 20, 0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(lx, ly, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  cachedBloodTex = new THREE.CanvasTexture(c);
+  return cachedBloodTex;
+}
+
 export class ParticlesVFX {
   private particles: Particle[] = [];
   private rings: ExpandingRing[] = [];
   private skidMarks: { mesh: THREE.Mesh; life: number }[] = [];
+  private bloodPools: BloodPool[] = [];
   private hydrants: HydrantJet[] = [];
 
   private boxGeo = new THREE.BoxGeometry(0.45, 0.45, 0.45);
   private sphereGeo = new THREE.SphereGeometry(0.35, 6, 6);
   private skidGeo = new THREE.PlaneGeometry(1, 1.45);
+  private bloodGeo = new THREE.PlaneGeometry(1, 1);
   private ringGeo = new THREE.RingGeometry(0.7, 1.0, 28);
 
   constructor(private scene: THREE.Scene) {
     this.skidGeo.rotateX(-Math.PI / 2);
+    this.bloodGeo.rotateX(-Math.PI / 2);
     this.ringGeo.rotateX(-Math.PI / 2);
   }
 
@@ -239,6 +278,58 @@ export class ParticlesVFX {
     }
   }
 
+  /** Realistic fine dark-crimson blood spatter droplets arcing along bullet/punch impact direction! */
+  public spawnBloodSpatter(
+    x: number,
+    y: number,
+    z: number,
+    dirX = 0,
+    dirZ = 0,
+    isHeadshot = false
+  ): void {
+    const count = isHeadshot ? 20 : 10;
+    for (let i = 0; i < count; i++) {
+      const col = i % 3 === 0 ? 0x7f1d1d : i % 2 === 0 ? 0xb91c1c : 0xdc2626;
+      const spread = isHeadshot ? 6.5 : 4.2;
+      this.addParticle(
+        x + (Math.random() - 0.5) * 0.2,
+        y + (Math.random() - 0.5) * 0.2,
+        z + (Math.random() - 0.5) * 0.2,
+        dirX * (3.5 + Math.random() * 4.5) + (Math.random() - 0.5) * spread,
+        1.5 + Math.random() * (isHeadshot ? 5.2 : 3.2),
+        dirZ * (3.5 + Math.random() * 4.5) + (Math.random() - 0.5) * spread,
+        col,
+        0.38 + Math.random() * 0.25,
+        0.18 + Math.random() * 0.16,
+        22,
+        -0.15,
+        true,
+        0.95
+      );
+    }
+  }
+
+  /** Realistic expanding glossy crimson blood pool decal spreading on the pavement under a fallen NPC! */
+  public spawnBloodPool(x: number, y: number, z: number, maxScale = 2.4): void {
+    if (this.bloodPools.length > 28) {
+      const old = this.bloodPools.shift()!;
+      this.scene.remove(old.mesh);
+      (old.mesh.material as THREE.Material).dispose();
+    }
+    const mat = new THREE.MeshBasicMaterial({
+      map: getBloodPoolTexture(),
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+    });
+    const m = new THREE.Mesh(this.bloodGeo, mat);
+    m.position.set(x, y + 0.045, z);
+    m.rotation.y = Math.random() * Math.PI * 2;
+    m.scale.setScalar(0.25);
+    this.scene.add(m);
+    this.bloodPools.push({ mesh: m, age: 0, maxScale, life: 22.0 });
+  }
+
   public spawnCashBurst(x: number, y: number, z: number): void {
     for (let i = 0; i < 14; i++) {
       this.addParticle(
@@ -345,6 +436,23 @@ export class ParticlesVFX {
         this.skidMarks.splice(i, 1);
       } else {
         (s.mesh.material as THREE.MeshBasicMaterial).opacity = Math.min(0.45, s.life * 0.12);
+      }
+    }
+
+    // Smoothly expand & eventually fade organic asphalt blood pools!
+    for (let i = this.bloodPools.length - 1; i >= 0; i--) {
+      const bp = this.bloodPools[i];
+      bp.age += dt;
+      bp.life -= dt;
+      const growT = Math.min(1, bp.age / 1.9);
+      const eased = 1 - Math.pow(1 - growT, 3);
+      bp.mesh.scale.setScalar(0.25 + eased * (bp.maxScale - 0.25));
+      if (bp.life <= 0) {
+        this.scene.remove(bp.mesh);
+        (bp.mesh.material as THREE.Material).dispose();
+        this.bloodPools.splice(i, 1);
+      } else if (bp.life < 3.0) {
+        (bp.mesh.material as THREE.MeshBasicMaterial).opacity = (bp.life / 3.0) * 0.92;
       }
     }
   }

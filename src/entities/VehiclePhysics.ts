@@ -380,9 +380,9 @@ export class VehiclePhysics {
       v.vz = nFwdZ * forwardSpeed + nRightZ * lateralSpeed;
     }
 
-    // Realistic 6-Speed Automatic Transmission RPM & Live Odometer!
-    const mph = Math.abs(forwardSpeed) * 2.75;
-    const gearThresholds = [0, 26, 52, 82, 114, 146, 210];
+    // Realistic 6-Speed Automatic Transmission RPM & Live Odometer (real m/s -> MPH = 2.237)!
+    const mph = Math.abs(forwardSpeed) * 2.237;
+    const gearThresholds = [0, 18, 36, 56, 78, 102, 150];
     let gearIdx = 1;
     for (let g = 1; g < gearThresholds.length; g++) {
       if (mph >= gearThresholds[g - 1]) gearIdx = g;

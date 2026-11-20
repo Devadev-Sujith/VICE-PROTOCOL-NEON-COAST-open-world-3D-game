@@ -1,7 +1,19 @@
 import * as THREE from 'three';
 import type { EventBus } from '../core/EventBus';
-import type { OutfitDef, UpgradeState, VehicleEntity, WeaponId } from '../core/types';
+import type { AvatarConfig, OutfitDef, UpgradeState, VehicleEntity, WeaponId } from '../core/types';
 import { CityGrid } from '../world/CityGrid';
+
+export const DEFAULT_AVATAR: AvatarConfig = {
+  name: 'Vex',
+  skinColor: 0xdfb088,
+  hairColor: 0x18181b,
+  longHair: false,
+  jacketColor: 0x1e293b,
+  shirtColor: 0xff2a85,
+  pantsColor: 0x111827,
+  shoeColor: 0xf8fafc,
+  hasShades: true,
+};
 
 export const OUTFITS: OutfitDef[] = [
   {
@@ -116,6 +128,9 @@ export function buildRoundedHumanMesh(opts: {
   shirtMat: THREE.MeshStandardMaterial;
   pantsMat: THREE.MeshStandardMaterial;
   shoeMat: THREE.MeshStandardMaterial;
+  skinMat: THREE.MeshStandardMaterial;
+  hairMat: THREE.MeshStandardMaterial;
+  longHairMesh: THREE.Mesh;
   shadesGroup: THREE.Group;
 } {
   const group = new THREE.Group();
@@ -164,13 +179,12 @@ export function buildRoundedHumanMesh(opts: {
   hair.position.set(0, 1.81, -0.02);
   torsoGroup.add(hair);
 
-  if (opts.longHair) {
-    // Stylish flowing hair silhouette for Nova & stylish citizens!
-    const backFlow = new THREE.Mesh(new THREE.CapsuleGeometry(0.14, 0.28, 6, 12), hairMat);
-    backFlow.position.set(0, 1.66, -0.11);
-    backFlow.rotation.x = 0.22;
-    torsoGroup.add(backFlow);
-  }
+  // Stylish flowing hair silhouette (always created so avatar customizer can toggle live!)
+  const longHairMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.14, 0.28, 6, 12), hairMat);
+  longHairMesh.position.set(0, 1.66, -0.11);
+  longHairMesh.rotation.x = 0.22;
+  longHairMesh.visible = !!opts.longHair;
+  torsoGroup.add(longHairMesh);
 
   const nose = new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 8), skinMat);
   nose.position.set(0, 1.75, 0.175);
@@ -235,7 +249,22 @@ export function buildRoundedHumanMesh(opts: {
     group.add(aura);
   }
 
-  return { group, torsoGroup, leftLeg, rightLeg, leftArm, rightArm, jacketMat, shirtMat, pantsMat, shoeMat, shadesGroup };
+  return {
+    group,
+    torsoGroup,
+    leftLeg,
+    rightLeg,
+    leftArm,
+    rightArm,
+    jacketMat,
+    shirtMat,
+    pantsMat,
+    shoeMat,
+    skinMat,
+    hairMat,
+    longHairMesh,
+    shadesGroup,
+  };
 }
 
 function buildWeaponMeshes(): {
@@ -318,12 +347,16 @@ export class PlayerController {
   private shirtMat: THREE.MeshStandardMaterial;
   private pantsMat: THREE.MeshStandardMaterial;
   private shoeMat: THREE.MeshStandardMaterial;
+  private skinMat: THREE.MeshStandardMaterial;
+  private hairMat: THREE.MeshStandardMaterial;
+  private longHairMesh: THREE.Mesh;
   private shadesGroup: THREE.Group;
 
   private weapons: ReturnType<typeof buildWeaponMeshes>;
   public fpViewmodelGroup: THREE.Group;
   private fpWeapons: ReturnType<typeof buildWeaponMeshes>;
   private fpFistRight: THREE.Mesh;
+  private fpFistMat: THREE.MeshStandardMaterial;
 
   public x = 180;
   public y = 0;
@@ -377,6 +410,9 @@ export class PlayerController {
     this.shirtMat = built.shirtMat;
     this.pantsMat = built.pantsMat;
     this.shoeMat = built.shoeMat;
+    this.skinMat = built.skinMat;
+    this.hairMat = built.hairMat;
+    this.longHairMesh = built.longHairMesh;
     this.shadesGroup = built.shadesGroup;
 
     // 3rd-person weapon rig mounted on right hand
@@ -390,10 +426,8 @@ export class PlayerController {
     this.fpWeapons = buildWeaponMeshes();
     this.fpWeapons.container.rotation.y = Math.PI; // Point away from camera (-Z)
     this.fpWeapons.container.position.set(0.24, -0.22, -0.45);
-    this.fpFistRight = new THREE.Mesh(
-      new THREE.SphereGeometry(0.085, 10, 10),
-      new THREE.MeshStandardMaterial({ color: 0xdfb088, roughness: 0.65 })
-    );
+    this.fpFistMat = new THREE.MeshStandardMaterial({ color: 0xdfb088, roughness: 0.65 });
+    this.fpFistRight = new THREE.Mesh(new THREE.SphereGeometry(0.085, 10, 10), this.fpFistMat);
     this.fpFistRight.position.set(0.22, -0.2, -0.38);
     this.fpViewmodelGroup.add(this.fpWeapons.container, this.fpFistRight);
     this.fpViewmodelGroup.visible = false;
@@ -411,6 +445,18 @@ export class PlayerController {
     this.pantsMat.color.setHex(outfit.pantsColor);
     this.shoeMat.color.setHex(outfit.shoeColor);
     this.shadesGroup.visible = outfit.hasShades;
+  }
+
+  public applyAvatarConfig(cfg: AvatarConfig): void {
+    this.skinMat.color.setHex(cfg.skinColor);
+    this.fpFistMat.color.setHex(cfg.skinColor);
+    this.hairMat.color.setHex(cfg.hairColor);
+    this.longHairMesh.visible = cfg.longHair;
+    this.jacketMat.color.setHex(cfg.jacketColor);
+    this.shirtMat.color.setHex(cfg.shirtColor);
+    this.pantsMat.color.setHex(cfg.pantsColor);
+    this.shoeMat.color.setHex(cfg.shoeColor);
+    this.shadesGroup.visible = cfg.hasShades;
   }
 
   public setWeapon(w: WeaponId): void {

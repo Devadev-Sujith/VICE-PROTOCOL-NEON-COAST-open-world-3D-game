@@ -97,7 +97,7 @@ export const Minimap: React.FC<MinimapProps> = ({ hud, onOpenFullMap }) => {
       let dx = s.sx;
       let dy = s.sy;
       if (!inView) {
-        if (b.kind === 'mission' || b.kind === 'paynspray' || b.kind === 'waypoint' || b.kind === 'event') {
+        if (b.kind === 'mission' || b.kind === 'paynspray' || b.kind === 'waypoint' || b.kind === 'event' || b.kind === 'remote_player') {
           const ang = Math.atan2(s.sy - cy, s.sx - cx);
           dx = cx + Math.cos(ang) * (cx - 10);
           dy = cy + Math.sin(ang) * (cy - 10);
@@ -136,6 +136,14 @@ export const Minimap: React.FC<MinimapProps> = ({ hud, onOpenFullMap }) => {
         ctx.fill();
         ctx.strokeStyle = '#fff';
         ctx.lineWidth = 1.2;
+        ctx.stroke();
+      } else if (b.kind === 'remote_player') {
+        ctx.fillStyle = b.color || '#00f5ff';
+        ctx.beginPath();
+        ctx.arc(dx, dy, 5.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.6;
         ctx.stroke();
       } else if (b.kind === 'police') {
         ctx.fillStyle = Math.floor(now / 180) % 2 === 0 ? '#ff1e42' : '#00d9ff';

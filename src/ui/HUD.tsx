@@ -492,9 +492,25 @@ export const HUD: React.FC<HUDProps> = ({
             display: 'inline-flex',
             alignItems: 'center',
             gap: 6,
+            position: 'relative',
           }}
         >
           <PhoneIcon size={15} /> [TAB] PHONE
+          {Object.values(hud.multiplayer.unreadByFriend).reduce((a, b) => a + b, 0) > 0 && (
+            <span
+              style={{
+                background: '#ff2a55',
+                color: '#fff',
+                fontSize: 9.5,
+                fontWeight: 950,
+                padding: '1px 5px',
+                borderRadius: 99,
+                marginLeft: 2,
+              }}
+            >
+              {Object.values(hud.multiplayer.unreadByFriend).reduce((a, b) => a + b, 0)}
+            </span>
+          )}
         </button>
       </div>
     </>

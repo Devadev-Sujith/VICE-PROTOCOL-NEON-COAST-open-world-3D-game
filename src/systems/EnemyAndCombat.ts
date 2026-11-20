@@ -158,7 +158,6 @@ export class EnemyAndCombat {
         const dot = (dx * dirX + dz * dirZ) / d;
         if (dot > 0.25) {
           peds.damageNpc(npc, 36, false, dirX, dirZ);
-          this.vfx.spawnSparks(npc.x, oy, npc.z, 0xfacc15, 6);
           this.events.emit('ui:hitmarker', undefined);
           this.events.emit('audio:crash', { intensity: 0.35 });
           this.events.emit('camera:shake', { amount: 0.16 });
@@ -319,17 +318,28 @@ export class EnemyAndCombat {
     }
   }
 
-  private damageEnemy(e: EnemyUnit, dmg: number, isHeadshot: boolean): void {
+  private damageEnemy(e: EnemyUnit, dmg: number, isHeadshot: boolean, dirX = 0, dirZ = 0): void {
     if (!e.alive) return;
     e.hp -= isHeadshot ? 999 : dmg;
     this.events.emit('ui:hitmarker', undefined);
-    this.vfx.spawnSparks(e.x, e.y + (isHeadshot ? 1.8 : 1.3), e.z, isHeadshot ? 0xff2a55 : 0xffd166, 7);
+    if (e.kind === 'enforcer') {
+      this.vfx.spawnBloodSpatter(e.x, e.y + (isHeadshot ? 1.72 : 1.25), e.z, dirX, dirZ, isHeadshot);
+    } else {
+      this.vfx.spawnSparks(e.x, e.y + 1.5, e.z, 0xffd166, 7);
+    }
     if (e.hp <= 0) {
       e.alive = false;
       if (isHeadshot) this.onHeadshotKill?.();
-      this.vfx.spawnExplosion(e.x, e.y + 1.5, e.z, e.kind === 'relay_tower' ? 1.7 : 0.75);
-      this.events.emit('audio:explosion', { distance: 12 });
-      this.events.emit('camera:shake', { amount: e.kind === 'relay_tower' ? 0.9 : 0.25 });
+      if (e.kind === 'enforcer') {
+        this.vfx.spawnBloodSpatter(e.x, e.y + 1.2, e.z, dirX, dirZ, true);
+        this.vfx.spawnBloodPool(e.x, e.y, e.z, isHeadshot ? 2.75 : 2.15);
+        this.events.emit('audio:crash', { intensity: 0.45 });
+        this.events.emit('camera:shake', { amount: 0.22 });
+      } else {
+        this.vfx.spawnExplosion(e.x, e.y + 1.5, e.z, 1.7);
+        this.events.emit('audio:explosion', { distance: 12 });
+        this.events.emit('camera:shake', { amount: 0.9 });
+      }
       this.scene.remove(e.mesh);
       this.enemyMixers.delete(e.id);
       this.onEnemyDestroyed?.(e);
@@ -423,7 +433,6 @@ export class EnemyAndCombat {
               const dmg = isHeadshot ? 200 : pr.damage;
               const spd = Math.hypot(pr.vx, pr.vz) || 1;
               const killed = peds.damageNpc(npc, dmg, isHeadshot, pr.vx / spd, pr.vz / spd);
-              this.vfx.spawnSparks(pr.x, pr.y, pr.z, isHeadshot ? 0xff1e42 : 0xfacc15, isHeadshot ? 12 : 6);
               this.events.emit('ui:hitmarker', undefined);
               if (killed && isHeadshot) this.onHeadshotKill?.();
               this.events.emit('wanted:crime', { severity: 0.7, reason: 'Public Shooting', x: npc.x, z: npc.z });
@@ -439,7 +448,8 @@ export class EnemyAndCombat {
               const horiz = Math.hypot(e.x - pr.x, e.z - pr.z);
               if (horiz < e.radius + 0.55) {
                 const isHeadshot = e.kind === 'enforcer' && pr.y >= e.y + 1.5 && horiz < 0.55;
-                this.damageEnemy(e, pr.damage, isHeadshot);
+                const spd = Math.hypot(pr.vx, pr.vz) || 1;
+                this.damageEnemy(e, pr.damage, isHeadshot, pr.vx / spd, pr.vz / spd);
                 hit = true;
                 break;
               }

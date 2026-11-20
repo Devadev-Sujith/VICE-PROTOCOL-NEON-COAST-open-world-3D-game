@@ -1,6 +1,8 @@
 import * as THREE from 'three';
+import { type LoadedSoldierRig, ModelLibrary } from '../core/ModelLibrary';
 import { buildRoundedHumanMesh } from '../entities/PlayerController';
 import { CityGrid, ROAD_COORDS } from '../world/CityGrid';
+import type { ParticlesVFX } from './ParticlesVFX';
 
 export interface CityNpc {
   id: string;
@@ -8,6 +10,9 @@ export interface CityNpc {
   role: string;
   lines: string[];
   mesh: THREE.Group;
+  proceduralRoot: THREE.Group;
+  soldierRig?: LoadedSoldierRig;
+  activeAnim?: 'idle' | 'walk' | 'run';
   leftLeg: THREE.Group;
   rightLeg: THREE.Group;
   leftArm: THREE.Group;
@@ -22,10 +27,14 @@ export interface CityNpc {
   hp: number;
   maxHp: number;
   alive: boolean;
-  fallProgress: number; // 0 standing -> 1 lying flat dead
+  fallProgress: number; // 0 standing -> 1 collapsed on pavement
+  fallPitchTarget: number;
+  fallRollTarget: number;
   respawnTimer: number;
   staggerVx: number;
   staggerVz: number;
+  tintColor: number;
+  useOpenSourceModel: boolean;
 }
 
 const NPC_PROFILES = [
@@ -46,13 +55,18 @@ export class PedestrianAI {
   public peds: CityNpc[] = [];
   public onNpcKilled?: (npc: CityNpc, isHeadshot: boolean) => void;
 
-  constructor(private scene: THREE.Scene, private grid: CityGrid) {}
+  constructor(
+    private scene: THREE.Scene,
+    private grid: CityGrid,
+    private vfx: ParticlesVFX
+  ) {}
 
   public spawnInitial(count = 34): void {
     for (let i = 0; i < count; i++) {
       const prof = NPC_PROFILES[i % NPC_PROFILES.length];
+      const tintColor = JACKET_COLORS[i % JACKET_COLORS.length];
       const built = buildRoundedHumanMesh({
-        jacketColor: JACKET_COLORS[i % JACKET_COLORS.length],
+        jacketColor: tintColor,
         shirtColor: SHIRT_COLORS[i % SHIRT_COLORS.length],
         pantsColor: i % 2 === 0 ? 0x1e293b : 0x334155,
         skinColor: SKIN_TONES[i % SKIN_TONES.length],
@@ -61,17 +75,21 @@ export class PedestrianAI {
         longHair: i % 2 === 1,
       });
 
+      const root = new THREE.Group();
+      root.add(built.group);
+
       const pt = this.pickSpawnPoint(i);
       const gy = Math.max(0, this.grid.getGroundHeight(pt.x, pt.z));
-      built.group.position.set(pt.x, gy, pt.z);
-      this.scene.add(built.group);
+      root.position.set(pt.x, gy, pt.z);
+      this.scene.add(root);
 
-      this.peds.push({
+      const npc: CityNpc = {
         id: `npc_${i}`,
         name: prof.name,
         role: prof.role,
         lines: prof.lines,
-        mesh: built.group,
+        mesh: root,
+        proceduralRoot: built.group,
         leftLeg: built.leftLeg,
         rightLeg: built.rightLeg,
         leftArm: built.leftArm,
@@ -87,10 +105,42 @@ export class PedestrianAI {
         maxHp: 100,
         alive: true,
         fallProgress: 0,
+        fallPitchTarget: -Math.PI * 0.49,
+        fallRollTarget: 0,
         respawnTimer: 0,
         staggerVx: 0,
         staggerVz: 0,
-      });
+        tintColor,
+        useOpenSourceModel: i % 5 === 0 || i % 5 === 2,
+      };
+      this.peds.push(npc);
+    }
+
+    // Seamlessly upgrade designated street NPCs to open-source rigged Soldier.glb skeletal models!
+    ModelLibrary.onReady(() => {
+      for (const npc of this.peds) {
+        if (!npc.useOpenSourceModel || npc.soldierRig) continue;
+        const rig = ModelLibrary.cloneSoldier(npc.tintColor);
+        if (!rig) continue;
+        npc.soldierRig = rig;
+        npc.mesh.add(rig.root);
+        npc.proceduralRoot.visible = false;
+        rig.actions.idle?.stop();
+        rig.actions.walk?.reset().play();
+        npc.activeAnim = 'walk';
+      }
+    });
+  }
+
+  private setSoldierClip(npc: CityNpc, mode: 'idle' | 'walk' | 'run'): void {
+    const rig = npc.soldierRig;
+    if (!rig || npc.activeAnim === mode) return;
+    const prev = npc.activeAnim ? rig.actions[npc.activeAnim] : undefined;
+    const next = rig.actions[mode];
+    if (next) {
+      prev?.fadeOut(0.18);
+      next.reset().fadeIn(0.18).play();
+      npc.activeAnim = mode;
     }
   }
 
@@ -115,7 +165,7 @@ export class PedestrianAI {
     return { x, z };
   }
 
-  /** GTA-style NPC damage, knockback stagger, headshot 1-shot kill & death collapse! */
+  /** GTA-style NPC damage with visceral crimson blood spatter, knockback & expanding asphalt blood pools! */
   public damageNpc(
     npc: CityNpc,
     damage: number,
@@ -125,10 +175,20 @@ export class PedestrianAI {
   ): boolean {
     if (!npc.alive) return false;
     npc.hp = Math.max(0, npc.hp - damage);
-    npc.staggerVx = knockDirX * (isHeadshot ? 5.5 : 4.2);
-    npc.staggerVz = knockDirZ * (isHeadshot ? 5.5 : 4.2);
+    npc.staggerVx = knockDirX * (isHeadshot ? 6.2 : 4.5);
+    npc.staggerVz = knockDirZ * (isHeadshot ? 6.2 : 4.5);
     npc.fleeTimer = 6.0;
     npc.heading = Math.atan2(knockDirX, knockDirZ);
+
+    // Realistic arterial crimson blood spatter arcing away from impact!
+    this.vfx.spawnBloodSpatter(
+      npc.x,
+      npc.y + (isHeadshot ? 1.72 : 1.18),
+      npc.z,
+      knockDirX,
+      knockDirZ,
+      isHeadshot
+    );
 
     // Nearby pedestrians panic immediately!
     this.spookNear(npc.x, npc.z, 32);
@@ -136,7 +196,29 @@ export class PedestrianAI {
     if (npc.hp <= 0) {
       npc.alive = false;
       npc.fallProgress = 0;
+      // Natural varied GTA collapse posture (backward sprawl or side slump)
+      const backward = Math.random() > 0.25;
+      npc.fallPitchTarget = backward ? -Math.PI * 0.49 : Math.PI * 0.47;
+      npc.fallRollTarget = (Math.random() - 0.5) * 0.48;
       npc.respawnTimer = 24;
+
+      // Visceral blood spray + expanding glossy crimson pavement blood pools!
+      this.vfx.spawnBloodSpatter(npc.x, npc.y + 1.15, npc.z, knockDirX, knockDirZ, true);
+      this.vfx.spawnBloodPool(npc.x + knockDirX * 0.35, npc.y, npc.z + knockDirZ * 0.35, isHeadshot ? 2.85 : 2.15);
+      this.vfx.spawnBloodPool(
+        npc.x + knockDirX * 0.95 + (Math.random() - 0.5) * 0.4,
+        npc.y,
+        npc.z + knockDirZ * 0.95 + (Math.random() - 0.5) * 0.4,
+        1.15
+      );
+
+      if (npc.soldierRig) {
+        npc.soldierRig.actions.walk?.stop();
+        npc.soldierRig.actions.run?.stop();
+        npc.soldierRig.actions.idle?.stop();
+        npc.activeAnim = undefined;
+      }
+
       this.onNpcKilled?.(npc, isHeadshot);
       return true;
     }
@@ -175,16 +257,23 @@ export class PedestrianAI {
       const p = this.peds[i];
 
       if (!p.alive) {
-        // Smooth ragdoll-style collapse onto asphalt!
-        p.fallProgress = Math.min(1, p.fallProgress + dt * 5.5);
+        // Multi-stage heavy collapse onto asphalt into the expanding blood pool!
+        p.fallProgress = Math.min(1, p.fallProgress + dt * 4.4);
+        const eased = 1 - Math.pow(1 - p.fallProgress, 2.5);
         p.x += p.staggerVx * dt;
         p.z += p.staggerVz * dt;
-        p.staggerVx *= Math.max(0, 1 - dt * 8);
-        p.staggerVz *= Math.max(0, 1 - dt * 8);
-        p.mesh.position.set(p.x, p.y + 0.16 * p.fallProgress, p.z);
-        p.mesh.rotation.x = -Math.PI * 0.48 * p.fallProgress;
-        p.leftArm.rotation.x = -0.7 * p.fallProgress;
-        p.rightArm.rotation.x = -0.9 * p.fallProgress;
+        p.staggerVx *= Math.max(0, 1 - dt * 7.5);
+        p.staggerVz *= Math.max(0, 1 - dt * 7.5);
+
+        p.mesh.position.set(p.x, p.y + 0.14 * eased, p.z);
+        p.mesh.rotation.x = p.fallPitchTarget * eased;
+        p.mesh.rotation.z = p.fallRollTarget * eased;
+        p.leftArm.rotation.x = -0.85 * eased;
+        p.leftArm.rotation.z = 0.52 * eased;
+        p.rightArm.rotation.x = -1.05 * eased;
+        p.rightArm.rotation.z = -0.45 * eased;
+        p.leftLeg.rotation.x = 0.25 * eased;
+        p.rightLeg.rotation.x = -0.18 * eased;
 
         p.respawnTimer -= dt;
         if (p.respawnTimer <= 0) {
@@ -196,6 +285,10 @@ export class PedestrianAI {
           p.alive = true;
           p.fallProgress = 0;
           p.mesh.rotation.x = 0;
+          p.mesh.rotation.z = 0;
+          p.leftArm.rotation.z = 0;
+          p.rightArm.rotation.z = 0;
+          if (p.soldierRig) this.setSoldierClip(p, 'walk');
         }
         continue;
       }
@@ -204,7 +297,7 @@ export class PedestrianAI {
       const dx = p.x - dangerX;
       const dz = p.z - dangerZ;
       const dSq = dx * dx + dz * dz;
-      if (inVehicle && dangerSpeed > 9 && dSq < 4.5) {
+      if (inVehicle && dangerSpeed > 8.5 && dSq < 4.5) {
         const d = Math.max(0.1, Math.sqrt(dSq));
         this.damageNpc(p, 100, false, dx / d, dz / d);
         continue;
@@ -223,7 +316,8 @@ export class PedestrianAI {
         p.staggerVz *= Math.max(0, 1 - dt * 9);
       }
 
-      const moveSpd = p.fleeTimer > 0 ? 6.8 : p.speed;
+      const fleeing = p.fleeTimer > 0;
+      const moveSpd = fleeing ? 6.8 : p.speed;
       if (p.fleeTimer > 0) p.fleeTimer -= dt;
       else if (Math.random() < 0.008) p.heading += (Math.random() - 0.5) * 1.4;
 
@@ -244,14 +338,20 @@ export class PedestrianAI {
       p.y = Math.max(-0.2, this.grid.getGroundHeight(p.x, p.z));
       p.mesh.position.set(p.x, p.y, p.z);
       p.mesh.rotation.x = 0;
+      p.mesh.rotation.z = 0;
       p.mesh.rotation.y = p.heading;
 
-      p.phase += dt * (p.fleeTimer > 0 ? 14 : 6.8);
-      const swing = Math.sin(p.phase) * 0.58;
-      p.leftLeg.rotation.x = swing;
-      p.rightLeg.rotation.x = -swing;
-      p.leftArm.rotation.x = -swing * 0.68;
-      p.rightArm.rotation.x = swing * 0.68;
+      if (p.soldierRig) {
+        this.setSoldierClip(p, fleeing ? 'run' : 'walk');
+        p.soldierRig.mixer.update(dt * (fleeing ? 1.25 : 0.85));
+      } else {
+        p.phase += dt * (fleeing ? 14 : 6.8);
+        const swing = Math.sin(p.phase) * 0.58;
+        p.leftLeg.rotation.x = swing;
+        p.rightLeg.rotation.x = -swing;
+        p.leftArm.rotation.x = -swing * 0.68;
+        p.rightArm.rotation.x = swing * 0.68;
+      }
     }
   }
 }

@@ -20,6 +20,7 @@ export type NovaAutonomousAction =
   | 'wander';
 
 interface WorldPerception {
+  playerName: string;
   playerX: number;
   playerZ: number;
   playerDistrict: string;
@@ -57,8 +58,9 @@ export class SentientAI {
   public thinking = false;
   public ridingWithPlayer = false;
 
-  // Read OpenAI Key cleanly from codebase environment (.env.local) — NEVER exposed in UI!
+  // Read OpenAI Key cleanly from codebase environment (.env.local) OR secure backend /api/nova proxy!
   private apiKey: string;
+  private serverProxyAvailable = false;
   public model: string;
 
   public activeBehavior: NovaAutonomousAction = 'wander';
@@ -78,6 +80,13 @@ export class SentientAI {
   ) {
     this.apiKey = (import.meta.env.VITE_OPENAI_API_KEY || '').trim();
     this.model = (import.meta.env.VITE_OPENAI_MODEL || 'gpt-4o-mini').trim();
+    // Auto-detect secure server-side /api/nova OpenAI proxy when deployed!
+    fetch('./api/health')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && d.novaAi) this.serverProxyAvailable = true;
+      })
+      .catch(() => {});
 
     // Beautifully designed stylish streetwear human character for Nova!
     const built = buildRoundedHumanMesh({
@@ -108,7 +117,7 @@ export class SentientAI {
   }
 
   public isApiConnected(): boolean {
-    return this.apiKey.length > 10;
+    return this.apiKey.length > 10 || this.serverProxyAvailable;
   }
 
   public teleportNearPlayer(px: number, pz: number): void {
@@ -183,13 +192,13 @@ export class SentientAI {
         reply = 'Bet—bet you can’t keep up with me! Sprint mode on! 🏃‍♀️';
         break;
       case 'wave':
-        reply = `Hey! Good seeing you around ${p.playerDistrict}—what are we getting into?`;
+        reply = `Hey ${p.playerName}! Good seeing you around ${p.playerDistrict}—what are we getting into?`;
         break;
       case 'wait_here':
-        reply = 'Gotcha, I’ll chill right here till you text me again.';
+        reply = `Gotcha ${p.playerName}, I’ll chill right here till you text me again.`;
         break;
       case 'heal_player':
-        reply = 'Whoa, you look beat up—here, take my spare med-kit right now (+35 HP)!';
+        reply = `Whoa ${p.playerName}, you look beat up—here, take my spare med-kit right now (+35 HP)!`;
         break;
       case 'distract_cops':
         reply = 'Say no more, I’ll call in a fake tip across town to pull a unit off your tail (-1★)!';
@@ -200,13 +209,13 @@ export class SentientAI {
       default:
         reply =
           userText.endsWith('?')
-            ? `Honestly ${p.playerDistrict} is wild tonight—I’m heading over to stick with you. Tell me if you wanna hit Sunset Café, the Mall, or just cruise!`
-            : `I’m right on my way to you! Hop in a ride and I’ll jump right in with you—where are we headed?`;
+            ? `Honestly ${p.playerDistrict} is wild tonight, ${p.playerName}—I’m heading over to stick with you. Tell me if you wanna hit Sunset Café, the Mall, or just cruise!`
+            : `I’m right on my way to you, ${p.playerName}! Hop in a ride and I’ll jump right in with you—where are we headed?`;
         break;
     }
 
     this.applyDecision({
-      thought: `Hanging out with Vex around ${p.playerDistrict}.`,
+      thought: `Hanging out with ${p.playerName} around ${p.playerDistrict}.`,
       speech: reply,
       mood: action === 'dance' || action === 'date_cafe' ? 'happy' : 'chill',
       action,
@@ -226,10 +235,10 @@ export class SentientAI {
     const dist = Math.round(Math.hypot(this.x - p.playerX, this.z - p.playerZ));
 
     const systemPrompt = `You are Nova, a warm, witty, down-to-earth 24-year-old resident of Neon Coast (a sunny coastal Miami-style city).
-You are texting your close friend (the player) via Messages on their phone while physically walking around the city with them.
+You are texting your close friend ${p.playerName} via Messages on their phone while physically walking around the city with them.
 CRITICAL RULES:
-- Talk 100% like a real human friend texting—natural, casual, expressive, short (1-2 sentences). NEVER mention AI, LLMs, OpenAI, GPT, prompts, game engines, coordinates, or "neural links".
-- ALWAYS listen to and obey the player's requests! If they ask you to come with them, follow them, go to the café on a date, dance, run, visit the mall, wait, heal them, etc., pick that EXACT matching action!
+- Talk 100% like a real human friend texting—natural, casual, expressive, short (1-2 sentences). Occasionally address them by name (${p.playerName}). NEVER mention AI, LLMs, OpenAI, GPT, prompts, game engines, coordinates, or "neural links".
+- ALWAYS listen to and obey ${p.playerName}'s requests! If they ask you to come with them, follow them, go to the café on a date, dance, run, visit the mall, wait, heal them, etc., pick that EXACT matching action!
 Respond ONLY with valid JSON:
 {
   "speech": "natural human text reply (1-2 sentences)",
@@ -237,7 +246,7 @@ Respond ONLY with valid JSON:
   "action": "follow_player | date_cafe | go_to_mall | go_to_clothes | go_to_beach | dance | run_around | wave | wait_here | gift_cash | heal_player | distract_cops | wander"
 }`;
 
-    const context = `Current situation: You are in ${myDistrict} (${dist}m from your friend who is in ${p.playerDistrict}, ${
+    const context = `Current situation: You are in ${myDistrict} (${dist}m from ${p.playerName} who is in ${p.playerDistrict}, ${
       p.inVehicle ? `driving a ${p.vehicleName}` : 'walking on foot'
     }, HP ${p.playerHp}/100, police stars ${p.wantedStars}/5, time ${p.timeOfDay}).`;
 
@@ -261,20 +270,27 @@ Respond ONLY with valid JSON:
     ];
 
     try {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: this.model,
-          messages,
-          response_format: { type: 'json_object' },
-          max_tokens: 180,
-          temperature: 0.85,
-        }),
-      });
+      const useProxy = this.serverProxyAvailable || this.apiKey.length <= 10;
+      const res = useProxy
+        ? await fetch('./api/nova', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: this.model, messages }),
+          })
+        : await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${this.apiKey}`,
+            },
+            body: JSON.stringify({
+              model: this.model,
+              messages,
+              response_format: { type: 'json_object' },
+              max_tokens: 180,
+              temperature: 0.85,
+            }),
+          });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}');
