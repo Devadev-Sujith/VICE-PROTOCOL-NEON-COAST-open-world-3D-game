@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import zlib from 'node:zlib';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -41,6 +42,42 @@ const MIME = {
   '.glb': 'model/gltf-binary',
   '.wasm': 'application/wasm',
 };
+
+const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.json', '.svg', '.wasm']);
+
+// RAM + Gzip static asset cache for INSTANT load speed over public tunnels!
+const assetCache = new Map(); // filePath -> { raw, gz, mime, cacheControl }
+
+function loadAsset(filePath) {
+  let entry = assetCache.get(filePath);
+  if (entry) return entry;
+  const raw = fs.readFileSync(filePath);
+  const ext = path.extname(filePath).toLowerCase();
+  const mime = MIME[ext] || 'application/octet-stream';
+  const gz = COMPRESSIBLE.has(ext) ? zlib.gzipSync(raw, { level: 6 }) : null;
+  const isImmutable =
+    filePath.includes(`${path.sep}assets${path.sep}`) ||
+    filePath.includes(`${path.sep}models${path.sep}`) ||
+    filePath.includes(`${path.sep}draco${path.sep}`);
+  const cacheControl = isImmutable ? 'public, max-age=31536000, immutable' : 'no-cache';
+  entry = { raw, gz, mime, cacheControl };
+  assetCache.set(filePath, entry);
+  return entry;
+}
+
+// Pre-warm index.html & JS/CSS bundles in RAM on startup!
+function prewarmDist() {
+  const walk = (dir) => {
+    if (!fs.existsSync(dir)) return;
+    for (const f of fs.readdirSync(dir)) {
+      const full = path.join(dir, f);
+      if (fs.statSync(full).isDirectory()) walk(full);
+      else loadAsset(full);
+    }
+  };
+  walk(DIST_DIR);
+}
+prewarmDist();
 
 // SINGLE GLOBAL WORLD STATE
 const clients = new Map(); // socket -> { playerId: string | null }
@@ -139,18 +176,33 @@ const server = http.createServer((req, res) => {
   if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
     filePath = path.join(DIST_DIR, 'index.html');
   }
-  const ext = path.extname(filePath).toLowerCase();
-  res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
-  fs.createReadStream(filePath).pipe(res);
+
+  const asset = loadAsset(filePath);
+  const acceptEnc = String(req.headers['accept-encoding'] || '');
+  const useGzip = asset.gz && acceptEnc.includes('gzip');
+  const buf = useGzip ? asset.gz : asset.raw;
+
+  const headers = {
+    'Content-Type': asset.mime,
+    'Content-Length': buf.length,
+    'Cache-Control': asset.cacheControl,
+    Vary: 'Accept-Encoding',
+  };
+  if (useGzip) headers['Content-Encoding'] = 'gzip';
+
+  res.writeHead(200, headers);
+  if (req.method === 'HEAD') res.end();
+  else res.end(buf);
 });
 
 // Zero-dependency RFC 6455 WebSocket upgrade for SINGLE GLOBAL WORLD multiplayer!
-server.on('upgrade', (req, socket) => {
+server.on('upgrade', (req, socket, head) => {
   const key = req.headers['sec-websocket-key'];
   if (!key) {
     socket.destroy();
     return;
   }
+  socket.setNoDelay(true);
   const accept = crypto
     .createHash('sha1')
     .update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
@@ -171,10 +223,9 @@ server.on('upgrade', (req, socket) => {
     if (!socket.destroyed) socket.write(encodeWsFrame(stateJson));
   }
 
-  let rxBuf = Buffer.alloc(0);
+  let rxBuf = head && head.length ? Buffer.from(head) : Buffer.alloc(0);
 
-  socket.on('data', (chunk) => {
-    rxBuf = Buffer.concat([rxBuf, chunk]);
+  const processFrames = () => {
     while (rxBuf.length >= 2) {
       const opcode = rxBuf[0] & 0x0f;
       const masked = (rxBuf[1] & 0x80) !== 0;
@@ -223,6 +274,12 @@ server.on('upgrade', (req, socket) => {
         broadcast(socket, text);
       }
     }
+  };
+
+  if (rxBuf.length) processFrames();
+  socket.on('data', (chunk) => {
+    rxBuf = Buffer.concat([rxBuf, chunk]);
+    processFrames();
   });
 
   const cleanup = () => {
@@ -238,5 +295,5 @@ server.on('upgrade', (req, socket) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   const { apiKey } = readOpenAiConfig();
-  console.log(`VICE PROTOCOL: NEON COAST Single-World Server listening on http://0.0.0.0:${PORT} (OpenAI proxy: ${apiKey ? 'ACTIVE' : 'NOT SET'})`);
+  console.log(`VICE PROTOCOL: NEON COAST Single-World Server (GZIP RAM Cache) listening on http://0.0.0.0:${PORT} (OpenAI proxy: ${apiKey ? 'ACTIVE' : 'NOT SET'})`);
 });

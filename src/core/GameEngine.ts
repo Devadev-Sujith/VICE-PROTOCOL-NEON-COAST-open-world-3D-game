@@ -182,8 +182,8 @@ export class GameEngine {
     this.container = container;
     this.callbacks = callbacks;
 
-    // Kick off open-source GLB model preloading immediately (Ferrari + Soldier!)
-    ModelLibrary.preloadAll();
+    // Defer open-source GLB streaming by 900ms so Title Screen & 3D City appear INSTANTLY!
+    window.setTimeout(() => ModelLibrary.preloadAll(), 900);
 
     this.scene = new THREE.Scene();
     const w = container.clientWidth || window.innerWidth;
