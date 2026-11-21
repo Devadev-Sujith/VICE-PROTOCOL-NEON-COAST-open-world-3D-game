@@ -8,7 +8,7 @@
 ![Stack](https://img.shields.io/badge/Stack-React_18_+_TypeScript_+_Node.js-facc15?style=for-the-badge)
 
 ### 🌐 Live Single-World Multiplayer Link
-**Play instantly (no install, no login):** https://traveler-pst-locked-assists.trycloudflare.com
+**Play instantly (no install, no login):** https://polymer-inspiration-deviation-arrived.trycloudflare.com
 
 *Everyone who opens the link spawns into the **exact same single Neon Coast world** together.*
 
