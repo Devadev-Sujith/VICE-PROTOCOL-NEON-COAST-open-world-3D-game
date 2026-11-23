@@ -7,8 +7,8 @@
 ![AI](https://img.shields.io/badge/Sentient_NPC-OpenAI_GPT--4o--mini-ec4899?style=for-the-badge)
 ![Stack](https://img.shields.io/badge/Stack-React_18_+_TypeScript_+_Node.js-facc15?style=for-the-badge)
 
-### 🌐 Live Single-World Multiplayer Link
-**Play instantly (no install, no login):** https://polymer-inspiration-deviation-arrived.trycloudflare.com
+### 🌐 Permanent Live Single-World Multiplayer Link (24/7 Cloudflare Workers + Durable Objects)
+**Play instantly (no install, no login, always online):** https://neon-coast.devadev.workers.dev
 
 *Everyone who opens the link spawns into the **exact same single Neon Coast world** together.*
 
@@ -53,15 +53,12 @@ Only have **2 minutes** to evaluate? Follow this exact 6-step walkthrough to see
 ### Under-the-Hood Networking Architecture
 ```text
 Browser Client (MultiplayerSystem.ts)
- ├── 1. Primary: Dedicated Zero-Dependency RFC 6455 WebSocket Hub (server/index.mjs -> /ws)
- │     • Stores latest state snapshot per connected player for instant new-joiner sync
- │     • Broadcasts 10Hz state transforms, Add Friend handshakes, 1-on-1 DMs & Co-op invites
- │     • Served via RAM pre-gzipped static cache + Cloudflare QUIC Edge (HTTPS + WSS)
- ├── 2. Automatic Global Failover: Pure-TypeScript MQTT 3.1.1 over WSS
- │     • Connects to wss://broker.emqx.io:8084/mqtt (failover: hivemq.com)
- │     • Single global topic: viceprotocol/neoncoast/world1/# (works even on static GitHub Pages!)
- └── 3. Local Multi-Tab Sync: BroadcastChannel('viceprotocol-neoncoast-world1')
-       • Instant 0ms synchronization across multiple browser tabs on the same machine
+ ├── 1. Primary (Production): Cloudflare Workers + Durable Object (worker/index.ts -> NeonCoastWorld)
+ │     • Single global SQLite Durable Object ("neon-coast-global-v1") with WebSocket Hibernation API
+ │     • Instant new-joiner state replay + 10Hz transforms, Add Friend, 1-on-1 DMs & Co-op invites
+ │     • Secure encrypted Cloudflare Secret (OPENAI_API_KEY) for /api/nova + 300-city Edge Static Assets
+ ├── 2. Self-Hosted Node Fallback: Zero-Dependency RFC 6455 WebSocket Hub (server/index.mjs -> /ws)
+ └── 3. Static / Offline Fallback: MQTT 3.1.1 over WSS + local BroadcastChannel multi-tab sync
 ```
 
 ---
