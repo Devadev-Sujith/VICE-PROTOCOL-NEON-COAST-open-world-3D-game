@@ -72,7 +72,9 @@ export class CameraRig {
     isAiming: boolean,
     scopeZoomFov: number,
     stuntSlowMo: number,
-    inInterior: boolean
+    inInterior: boolean,
+    allowUnderwater = false,
+    seabedFloorY = -14
   ): void {
     const inVehicle = !!playerVeh;
     const domain = playerVeh?.stats.domain ?? null;
@@ -186,10 +188,10 @@ export class CameraRig {
       desiredLook.set(targetX - Math.sin(this.yaw) * 9, targetY + 1.35, targetZ - Math.cos(this.yaw) * 9);
       desiredFov = playerVeh?.nitroActive ? 78 : 66 + speedRatio * 7;
     }
-    // 8. Standard GTA 6 Third-Person Chase / Over-the-Shoulder On-Foot Cam
+    // 8. Standard GTA 6 Third-Person Chase / Over-the-Shoulder On-Foot / Underwater Swim Cam
     else {
-      const dist = inInterior ? 3.8 : inVehicle ? 10.0 + speedRatio * 2.5 : 4.6;
-      const height = inInterior ? 2.3 : inVehicle ? 3.9 + speedRatio * 0.7 : 2.55;
+      const dist = inInterior ? 3.8 : inVehicle ? 10.0 + speedRatio * 2.5 : allowUnderwater ? 5.1 : 4.6;
+      const height = inInterior ? 2.3 : inVehicle ? 3.9 + speedRatio * 0.7 : allowUnderwater ? 1.95 : 2.55;
       const camX = targetX + Math.sin(this.yaw) * dist;
       const camZ = targetZ + Math.cos(this.yaw) * dist;
       const pitchOff = inInterior ? this.pitch * 1.4 : (this.pitch - 0.18) * 4.2;
@@ -198,10 +200,10 @@ export class CameraRig {
       const lookAhead = inVehicle ? 5.5 + speedRatio * 4.0 : 6.0;
       desiredLook.set(
         targetX - Math.sin(this.yaw) * lookAhead,
-        targetY + (inVehicle ? 1.4 : 1.55 - this.pitch * 2.8),
+        targetY + (inVehicle ? 1.4 : allowUnderwater ? 1.15 - this.pitch * 3.0 : 1.55 - this.pitch * 2.8),
         targetZ - Math.cos(this.yaw) * lookAhead
       );
-      desiredFov = playerVeh?.nitroActive ? 78 : 62 + speedRatio * 9;
+      desiredFov = playerVeh?.nitroActive ? 78 : allowUnderwater ? 68 : 62 + speedRatio * 9;
     }
 
     if (instantSnap) {
@@ -221,9 +223,10 @@ export class CameraRig {
       this.shakeIntensity *= Math.max(0, 1 - dt * 8.5);
     }
 
+    const minCamY = inInterior ? -999 : allowUnderwater ? seabedFloorY + 0.55 : 0.75;
     this.camera.position.set(
       this.currentPos.x + sx,
-      inInterior ? this.currentPos.y + sy : Math.max(0.75, this.currentPos.y + sy),
+      Math.max(minCamY, this.currentPos.y + sy),
       this.currentPos.z
     );
     this.camera.lookAt(this.currentLook);

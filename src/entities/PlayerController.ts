@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { EventBus } from '../core/EventBus';
 import type { AvatarConfig, OutfitDef, UpgradeState, VehicleEntity, WeaponId } from '../core/types';
-import { CityGrid } from '../world/CityGrid';
+import { CityGrid, getWaveHeight, WATER_LEVEL } from '../world/CityGrid';
 
 export const DEFAULT_AVATAR: AvatarConfig = {
   name: 'Vex',
@@ -102,6 +102,7 @@ export interface PlayerMoveInput {
   right: number;
   sprint: boolean;
   jump: boolean;
+  diveDown: boolean;
   fire: boolean;
   aiming: boolean;
 }
@@ -357,6 +358,7 @@ export class PlayerController {
   private fpWeapons: ReturnType<typeof buildWeaponMeshes>;
   private fpFistRight: THREE.Mesh;
   private fpFistMat: THREE.MeshStandardMaterial;
+  private scubaGroup: THREE.Group;
 
   public x = 180;
   public y = 0;
@@ -369,6 +371,21 @@ export class PlayerController {
   public hp = 100;
   public maxHp = 100;
   public visible = false;
+
+  // Swimming, Underwater Diving, Energy Bar & Real-World 7L / 63 cu ft Scuba Tank (30 min = 1800s!)
+  public inWater = false;
+  public isUnderwater = false;
+  public swimDepthMeters = 0;
+  public swimEnergy = 100;
+  public swimExhausted = false;
+  public swimExhaustCooldown = 0;
+  public hasScubaGear = false;
+  public scubaOxygenSeconds = 0;
+  public readonly scubaMaxSeconds = 1800; // 30 minutes real-time shallow underwater swim (7L / 63 cu ft @ 3000 PSI)
+  private swimPhase = 0;
+  private swimPoseBlend = 0;
+  private swimSplashAccum = 0;
+  private scubaBubbleAccum = 0;
 
   // Combat & Weapons (Fists, Pistol, AK-47, Sniper)
   public weapon: WeaponId = 'ak47';
@@ -434,9 +451,60 @@ export class PlayerController {
     camera.add(this.fpViewmodelGroup);
     if (!camera.parent) scene.add(camera);
 
+    // 3D Scuba Dive Mask + Yellow 7.0L / 63 cu ft Aluminum Oxygen Cylinder (visible when bought!)
+    this.scubaGroup = this.buildScubaGearMesh();
+    this.scubaGroup.visible = false;
+    this.torsoGroup.add(this.scubaGroup);
+
     this.setWeapon('ak47');
     this.mesh.visible = false;
     scene.add(this.mesh);
+  }
+
+  private buildScubaGearMesh(): THREE.Group {
+    const g = new THREE.Group();
+    const maskFrame = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.4, metalness: 0.3 });
+    const maskGlass = new THREE.MeshPhysicalMaterial({
+      color: 0x38bdf8,
+      transparent: true,
+      opacity: 0.55,
+      roughness: 0.08,
+      metalness: 0.2,
+    });
+    const tankYellow = new THREE.MeshStandardMaterial({ color: 0xfacc15, metalness: 0.55, roughness: 0.25 });
+    const chrome = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.85, roughness: 0.2 });
+
+    // Wide Panoramic Dive Mask over eyes
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.11, 0.07), maskGlass);
+    visor.position.set(0, 1.79, 0.18);
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.13, 0.05), maskFrame);
+    frame.position.set(0, 1.79, 0.16);
+    // Mouthpiece regulator
+    const reg = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.08, 8), maskFrame);
+    reg.rotation.x = Math.PI / 2;
+    reg.position.set(0, 1.67, 0.2);
+
+    // 7.0L Compact Yellow Aluminum Cylinder strapped to back!
+    const tank = new THREE.Mesh(new THREE.CapsuleGeometry(0.11, 0.42, 6, 12), tankYellow);
+    tank.position.set(0, 1.24, -0.27);
+    const valve = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, 0.11, 8), chrome);
+    valve.position.set(0, 1.56, -0.27);
+    const strap = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.08, 0.36), maskFrame);
+    strap.position.set(0, 1.28, -0.14);
+
+    // Air hose wrapping cleanly from tank valve over right shoulder to regulator
+    const hose = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.018, 6, 14, Math.PI * 1.15), maskFrame);
+    hose.position.set(0.14, 1.54, -0.04);
+    hose.rotation.y = Math.PI / 2;
+
+    g.add(frame, visor, reg, tank, valve, strap, hose);
+    return g;
+  }
+
+  public equipScubaGear(): void {
+    this.hasScubaGear = true;
+    this.scubaOxygenSeconds = this.scubaMaxSeconds;
+    this.scubaGroup.visible = true;
   }
 
   public applyOutfit(outfit: OutfitDef): void {
@@ -507,6 +575,12 @@ export class PlayerController {
     this.vx = 0;
     this.vy = 0;
     this.vz = 0;
+    this.inWater = false;
+    this.isUnderwater = false;
+    this.swimDepthMeters = 0;
+    this.swimPoseBlend = 0;
+    this.mesh.rotation.x = 0;
+    this.torsoGroup.rotation.y = 0;
     if (heading !== undefined) this.heading = heading;
     this.mesh.position.set(x, y, z);
     this.mesh.rotation.y = this.heading;
@@ -514,6 +588,7 @@ export class PlayerController {
 
   public update(
     dt: number,
+    elapsed: number,
     input: PlayerMoveInput,
     cameraYaw: number,
     cameraPitch: number,
@@ -533,10 +608,16 @@ export class PlayerController {
       weapon: WeaponId,
       isScoped: boolean
     ) => void,
-    onMeleePunch: (ox: number, oy: number, oz: number, dx: number, dz: number) => void
+    onMeleePunch: (ox: number, oy: number, oz: number, dx: number, dz: number) => void,
+    onSwimRipple?: (x: number, y: number, z: number, fast: boolean) => void,
+    onSwimBubble?: (x: number, y: number, z: number) => void,
+    onDrowningTick?: (dmg: number) => void
   ): void {
     if (!this.visible) {
       this.fpViewmodelGroup.visible = false;
+      this.inWater = false;
+      this.isUnderwater = false;
+      this.swimDepthMeters = 0;
       return;
     }
 
@@ -569,6 +650,225 @@ export class PlayerController {
     let mx = camFwdX * input.forward + camRightX * input.right;
     let mz = camFwdZ * input.forward + camRightZ * input.right;
     const mag = Math.hypot(mx, mz);
+
+    // Check water immersion seamlessly (ocean & bay channel — NO instant land teleport!)
+    const waveY = getWaveHeight(this.x, this.z, elapsed);
+    const seabedY = inInterior ? 0 : this.grid.getSeabedHeight(this.x, this.z);
+    const onDryStructure = !inInterior && (this.grid.isOnBridge(this.x, this.z) || this.grid.isOnPier(this.x, this.z));
+    const overDeepWater = !inInterior && !onDryStructure && seabedY < waveY - 0.78;
+
+    if (overDeepWater && (this.inWater || this.y <= waveY - 0.32)) {
+      if (!this.inWater) {
+        this.inWater = true;
+        this.grounded = false;
+        onSwimRipple?.(this.x, waveY, this.z, true);
+      }
+    } else if (this.inWater && (!overDeepWater || seabedY >= waveY - 0.58)) {
+      this.inWater = false;
+      this.isUnderwater = false;
+      this.swimDepthMeters = 0;
+    }
+
+    // Show 3D Scuba Mask & 7.0L Tank cleanly whenever equipped (especially underwater/swimming!)
+    this.scubaGroup.visible = this.hasScubaGear;
+
+    // ==================== SWIMMING & UNDERWATER DIVING ENGINE ====================
+    if (this.inWater) {
+      this.weapons.container.visible = false;
+      this.fpViewmodelGroup.visible = false;
+
+      const movingHoriz = mag > 0.05;
+      const surfaceFloatY = waveY - 1.32;
+      const divingSubmerged = this.y + 1.52 < waveY - 0.06;
+      this.isUnderwater = divingSubmerged;
+      this.swimDepthMeters = divingSubmerged ? Math.max(0, waveY - (this.y + 1.52)) : 0;
+
+      // Sprint swimming allowed ONLY while not in 5-second energy recovery lockout!
+      const fastSwim = input.sprint && (movingHoriz || input.diveDown || input.jump) && !this.swimExhausted;
+      const activeScuba = this.hasScubaGear && this.scubaOxygenSeconds > 0;
+
+      // === ENERGY / STAMINA + BREATH CONTROL BAR + 5-SECOND RECOVERY LOCKOUT ===
+      if (this.swimExhausted) {
+        this.swimExhaustCooldown = Math.max(0, this.swimExhaustCooldown - dt);
+        this.swimEnergy = Math.min(100, ((5.0 - this.swimExhaustCooldown) / 5.0) * 100);
+        if (this.swimExhaustCooldown <= 0) {
+          this.swimExhausted = false;
+          this.swimEnergy = 100;
+        }
+        // If still stuck underwater without scuba during exhaustion, player drowns!
+        if (this.isUnderwater && !activeScuba) {
+          this.swimEnergy = 0;
+          this.swimExhaustCooldown = 5.0; // Must surface to catch breath!
+          onDrowningTick?.(13 * dt);
+        }
+      } else if (this.isUnderwater) {
+        if (activeScuba) {
+          // 7.0L / 63 cu ft Scuba Tank lasts 30 real-time minutes (1800s)!
+          this.scubaOxygenSeconds = Math.max(0, this.scubaOxygenSeconds - dt * (fastSwim ? 1.15 : 1.0));
+          // Fast swimming still uses physical swim energy (5s recovery if depleted), without drowning!
+          if (fastSwim) {
+            this.swimEnergy = Math.max(0, this.swimEnergy - 18 * dt);
+            if (this.swimEnergy <= 0) {
+              this.swimExhausted = true;
+              this.swimExhaustCooldown = 5.0;
+            }
+          } else {
+            this.swimEnergy = Math.min(100, this.swimEnergy + 15 * dt);
+          }
+          // Realistic underwater regulator bubbles!
+          this.scubaBubbleAccum += dt;
+          if (this.scubaBubbleAccum >= 0.48) {
+            this.scubaBubbleAccum = 0;
+            onSwimBubble?.(this.x + Math.sin(this.heading) * 0.35, this.y + 1.55, this.z + Math.cos(this.heading) * 0.35);
+          }
+        } else {
+          // Breath-hold underwater uses the exact same Energy Bar!
+          const breathDrain = fastSwim ? 17.5 : 7.5;
+          this.swimEnergy = Math.max(0, this.swimEnergy - breathDrain * dt);
+          if (this.swimEnergy <= 0) {
+            // Out of breath underwater -> drowning HP drop until surfacing!
+            onDrowningTick?.(13 * dt);
+            this.scubaBubbleAccum += dt;
+            if (this.scubaBubbleAccum >= 0.35) {
+              this.scubaBubbleAccum = 0;
+              onSwimBubble?.(this.x, this.y + 1.5, this.z);
+            }
+          }
+        }
+      } else {
+        // Surface swimming: Shift fast-swim drains Energy Bar -> 0 triggers exact 5s recovery cooldown!
+        if (fastSwim) {
+          this.swimEnergy = Math.max(0, this.swimEnergy - 20 * dt);
+          if (this.swimEnergy <= 0) {
+            this.swimExhausted = true;
+            this.swimExhaustCooldown = 5.0;
+          }
+        } else {
+          this.swimEnergy = Math.min(100, this.swimEnergy + 16 * dt);
+        }
+      }
+
+      // Horizontal swimming velocity (smooth aquatic acceleration & drag!)
+      const swimSpeed = fastSwim ? 9.4 : 5.4;
+      if (movingHoriz) {
+        mx /= mag;
+        mz /= mag;
+        this.vx += (mx * swimSpeed - this.vx) * Math.min(1, dt * 6.5);
+        this.vz += (mz * swimSpeed - this.vz) * Math.min(1, dt * 6.5);
+        const targetHeading = firstPersonMode ? Math.atan2(camFwdX, camFwdZ) : Math.atan2(mx, mz);
+        let diff = targetHeading - this.heading;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        this.heading += diff * Math.min(1, dt * 9.0);
+      } else {
+        this.vx *= Math.max(0, 1 - 4.2 * dt);
+        this.vz *= Math.max(0, 1 - 4.2 * dt);
+        if (firstPersonMode) this.heading = Math.atan2(camFwdX, camFwdZ);
+      }
+
+      // Vertical diving controls: [X/Ctrl] Dive Down, [Space] Swim Up, or pitch camera strongly down/up while swimming forward!
+      let targetVy = 0;
+      const pitchDive = movingHoriz && input.forward > 0.2 && cameraPitch > 0.34;
+      const pitchRise = movingHoriz && input.forward > 0.2 && cameraPitch < -0.24 && this.isUnderwater;
+      if (input.diveDown || pitchDive) {
+        targetVy = fastSwim ? -5.8 : -3.9;
+      } else if (input.jump || pitchRise) {
+        targetVy = fastSwim ? 6.2 : 4.4;
+      } else if (!this.isUnderwater || this.y > surfaceFloatY - 0.28) {
+        // Gentle buoyant wave bobbing right at the ocean surface!
+        targetVy = (surfaceFloatY - this.y) * 5.5;
+      } else {
+        // Neutral underwater buoyancy!
+        targetVy = 0;
+      }
+
+      this.vy += (targetVy - this.vy) * Math.min(1, dt * 6.5);
+
+      const nextX = THREE.MathUtils.clamp(this.x + this.vx * dt, -430, 445);
+      const nextZ = THREE.MathUtils.clamp(this.z + this.vz * dt, -430, 430);
+      const col = this.grid.resolveCircleCollision(nextX, nextZ, 0.42, this.y);
+      this.x = col.x;
+      this.z = col.z;
+
+      const nextSeabed = this.grid.getSeabedHeight(this.x, this.z);
+      const nextWaveY = getWaveHeight(this.x, this.z, elapsed);
+      const maxSurfaceY = nextWaveY - 1.26;
+      const minFloorY = nextSeabed + 0.42;
+      this.y = THREE.MathUtils.clamp(this.y + this.vy * dt, minFloorY, Math.max(minFloorY, maxSurfaceY));
+
+      // Trigger recovery cooldown if player surfaced right as breath hit 0!
+      if (!this.isUnderwater && this.swimEnergy <= 1 && !this.swimExhausted) {
+        this.swimExhausted = true;
+        this.swimExhaustCooldown = 5.0;
+      }
+
+      // === ULTRA-REALISTIC FRONT-CRAWL SWIMMING & LAPPING ANIMATION ===
+      const speedNow = Math.hypot(this.vx, this.vz, this.vy * 0.6);
+      const activeStroke = speedNow > 0.85;
+      this.swimPoseBlend += ((activeStroke ? 1 : 0) - this.swimPoseBlend) * Math.min(1, dt * 6.5);
+      this.swimPhase += dt * (fastSwim ? 10.6 : activeStroke ? 6.8 : 3.2);
+
+      // Smooth surface water ripples & splashes during strokes!
+      if (!this.isUnderwater && activeStroke) {
+        this.swimSplashAccum += dt;
+        if (this.swimSplashAccum >= (fastSwim ? 0.16 : 0.28)) {
+          this.swimSplashAccum = 0;
+          onSwimRipple?.(this.x, nextWaveY, this.z, fastSwim);
+        }
+      }
+
+      // Horizontal swimmer pitch + subtle dive angle + organic shoulder/torso roll!
+      const divePitchTilt = THREE.MathUtils.clamp(-this.vy * 0.08, -0.35, 0.42);
+      const swimPitch = this.swimPoseBlend * (1.28 + divePitchTilt) + (1 - this.swimPoseBlend) * 0.12;
+      this.mesh.rotation.order = 'YXZ';
+      this.mesh.rotation.y = this.heading;
+      this.mesh.rotation.x = swimPitch;
+      this.torsoGroup.position.y = 0;
+      this.torsoGroup.rotation.y = this.swimPoseBlend * Math.sin(this.swimPhase) * 0.28;
+
+      if (activeStroke) {
+        // Authentic alternating front-crawl (freestyle) overarm stroke & high-elbow recovery!
+        const rPhase = this.swimPhase;
+        const lPhase = this.swimPhase + Math.PI;
+        this.rightArm.rotation.x = -rPhase - Math.PI * 0.5;
+        this.rightArm.rotation.z = -0.22 - Math.max(0, Math.sin(rPhase)) * 0.36;
+        this.leftArm.rotation.x = -lPhase - Math.PI * 0.5;
+        this.leftArm.rotation.z = 0.22 + Math.max(0, Math.sin(lPhase)) * 0.36;
+
+        // Rhythmic flutter kicks!
+        const kick = Math.sin(this.swimPhase * 2.2) * (fastSwim ? 0.52 : 0.38);
+        this.leftLeg.rotation.x = kick;
+        this.rightLeg.rotation.x = -kick;
+      } else {
+        // Relaxed upright treading water (sculling arms & gentle leg kicks)
+        const tread = Math.sin(this.swimPhase);
+        this.leftArm.rotation.x = -0.45 + tread * 0.25;
+        this.rightArm.rotation.x = -0.45 - tread * 0.25;
+        this.leftArm.rotation.z = 0.62 + tread * 0.24;
+        this.rightArm.rotation.z = -0.62 - tread * 0.24;
+        this.leftLeg.rotation.x = tread * 0.32;
+        this.rightLeg.rotation.x = -tread * 0.32;
+      }
+
+      this.mesh.visible = this.visible && !firstPersonMode;
+      this.mesh.position.set(this.x, this.y + this.swimPoseBlend * 0.85, this.z);
+      return;
+    }
+
+    // ==================== DRY LAND WALKING & COMBAT ====================
+    this.weapons.container.visible = true;
+    this.mesh.rotation.x = 0;
+    this.torsoGroup.rotation.y = 0;
+    this.rightArm.rotation.z = 0;
+    this.swimPoseBlend = 0;
+
+    // Recover swim stamina rapidly when back on land!
+    if (this.swimExhausted) {
+      this.swimExhaustCooldown = Math.max(0, this.swimExhaustCooldown - dt * 1.5);
+      if (this.swimExhaustCooldown <= 0) this.swimExhausted = false;
+    }
+    this.swimEnergy = Math.min(100, this.swimEnergy + 28 * dt);
+
     const moveSpeed = input.aiming ? 4.4 : input.sprint ? 12.6 : 7.8;
 
     if (mag > 0.05) {
@@ -609,17 +909,16 @@ export class PlayerController {
     } else {
       // Tight realistic building & tree collision (radius 0.36m)
       const col = this.grid.resolveCircleCollision(nextX, nextZ, 0.36, this.y);
-      this.x = col.x;
-      this.z = col.z;
+      this.x = THREE.MathUtils.clamp(col.x, -430, 445);
+      this.z = THREE.MathUtils.clamp(col.z, -430, 430);
 
-      // SOLID PLAYER-VS-VEHICLE COLLISION (FIX ITEM #7: Player can NEVER walk through cars!)
+      // SOLID PLAYER-VS-VEHICLE COLLISION (Player can NEVER walk through cars!)
       for (let i = 0; i < allVehicles.length; i++) {
         const v = allVehicles[i];
-        if (v.destroyed || v.stats.domain === 'water') continue;
-        if (this.y > v.y + v.stats.height + 0.15) continue; // Allow jumping ON TOP of car hoods/roofs!
+        if (v.destroyed || v.stats.domain === 'water' || v.submerged) continue;
+        if (this.y > v.y + v.stats.height + 0.15) continue;
         const dx = this.x - v.x;
         const dz = this.z - v.z;
-        // Transform player into vehicle local space for exact rectangular car collision!
         const sinH = Math.sin(v.heading);
         const cosH = Math.cos(v.heading);
         const localZ = dx * sinH + dz * cosH;
@@ -637,14 +936,6 @@ export class PlayerController {
           this.x += pushLX * cosH + pushLZ * sinH;
           this.z += -pushLX * sinH + pushLZ * cosH;
         }
-      }
-
-      if (this.grid.isWater(this.x, this.z) && this.y < -0.5) {
-        const safe = this.grid.getNearestRoadPoint(this.x, this.z);
-        this.x = safe.x;
-        this.z = safe.z;
-        this.y = this.grid.getGroundHeight(safe.x, safe.z) + 0.3;
-        this.vy = 0;
       }
     }
 

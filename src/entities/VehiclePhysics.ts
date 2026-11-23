@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { EventBus } from '../core/EventBus';
 import type { DestructibleProp, UpgradeState, VehicleEntity } from '../core/types';
 import type { ParticlesVFX } from '../systems/ParticlesVFX';
-import { CityGrid, PIER_YACHT_POS } from '../world/CityGrid';
+import { CityGrid, getWaveHeight, PIER_YACHT_POS, WATER_LEVEL } from '../world/CityGrid';
 
 export interface VehicleInput {
   throttle: number; // -1..1 (Car accel/brake, Boat throttle, Heli forward/back cyclic)
@@ -27,6 +27,7 @@ export class VehiclePhysics {
   public onStuntLanded?: (res: StuntResult) => void;
   public onDriftBanked?: (cash: number, mult: number) => void;
   public onBarrelExploded?: (x: number, y: number, z: number) => void;
+  public onSubmergedBubble?: (x: number, y: number, z: number) => void;
 
   constructor(
     private grid: CityGrid,
@@ -125,9 +126,8 @@ export class VehiclePhysics {
       }
     }
 
-    // Buoyancy synced with animated ocean waves!
-    const waveY =
-      -0.72 + Math.sin(v.x * 0.055 + elapsed * 1.7) * 0.16 + Math.cos(v.z * 0.065 + elapsed * 1.3) * 0.14;
+    // Buoyancy synced with animated Three.js Water rolling ocean swells!
+    const waveY = getWaveHeight(v.x, v.z, elapsed) + 0.14;
     const planingLift = Math.min(0.42, Math.abs(fwdSpeed) * 0.012);
     v.y += (waveY + planingLift - v.y) * Math.min(1, dt * 8);
     v.speed = fwdSpeed;
@@ -295,6 +295,45 @@ export class VehiclePhysics {
   ): void {
     const isPlayer = v.driver === 'player';
 
+    // If vehicle has already driven into the ocean and is SINKING / SUBMERGED!
+    if (v.submerged) {
+      v.submergedTimer = (v.submergedTimer || 0) + dt;
+      v.nitroActive = false;
+      v.drifting = false;
+      v.rpm = Math.max(0, v.rpm - 3200 * dt);
+      v.vx *= Math.max(0, 1 - 2.6 * dt);
+      v.vz *= Math.max(0, 1 - 2.6 * dt);
+      v.x = THREE.MathUtils.clamp(v.x + v.vx * dt, -460, 480);
+      v.z = THREE.MathUtils.clamp(v.z + v.vz * dt, -460, 460);
+
+      const seabed = this.grid.getSeabedHeight(v.x, v.z);
+      const sinking = v.y > seabed + 0.12;
+      if (sinking) {
+        // Nose-heavy realistic sinking through the ocean!
+        v.vy = -1.65;
+        v.y = Math.max(seabed, v.y + v.vy * dt);
+      } else {
+        v.y = seabed;
+        v.vy = 0;
+      }
+      v.speed = Math.hypot(v.vx, v.vz);
+      v.mesh.position.set(v.x, v.y, v.z);
+      v.mesh.rotation.y = v.heading;
+      const targetSinkPitch = sinking ? 0.24 : 0.05;
+      v.visualPitch += (targetSinkPitch - v.visualPitch) * Math.min(1, dt * 2.5);
+      v.visualRoll += (Math.sin(elapsed * 1.1) * (sinking ? 0.08 : 0.01) - v.visualRoll) * Math.min(1, dt * 2.5);
+      v.bodyGroup.rotation.x = v.visualPitch;
+      v.bodyGroup.rotation.z = v.visualRoll;
+
+      for (const flame of v.nitroFlames) flame.visible = false;
+      if (Math.random() < (sinking ? 0.6 : 0.22)) {
+        const fx = Math.sin(v.heading);
+        const fz = Math.cos(v.heading);
+        this.onSubmergedBubble?.(v.x + fx * 1.5, v.y + 0.9, v.z + fz * 1.5);
+      }
+      return;
+    }
+
     if (v.empStunTimer > 0) {
       v.empStunTimer = Math.max(0, v.empStunTimer - dt);
       input = { throttle: 0, steer: 0, handbrake: true, nitro: false };
@@ -438,10 +477,10 @@ export class VehiclePhysics {
       if (isPlayer) this.activeStuntSlowMo = 1.15;
     }
 
-    // Water rescue / Yacht landing
-    if (this.grid.isWater(nextX, nextZ) && v.y < -0.45) {
+    // Yacht Landing OR Realistic Ocean Sinking (NO stupid instant land teleport!)
+    if (this.grid.isWater(nextX, nextZ) && v.y < WATER_LEVEL + 0.35) {
       const yachtDist = Math.hypot(nextX - PIER_YACHT_POS.x, nextZ - PIER_YACHT_POS.z);
-      if (yachtDist < 17) {
+      if (yachtDist < 17 && v.y >= -1.2) {
         v.y = 2.6;
         v.vy = 0;
         v.vx *= 0.75;
@@ -451,20 +490,22 @@ export class VehiclePhysics {
           const dist = Math.hypot(v.x - v.launchX, v.z - v.launchZ);
           this.onStuntLanded?.({ distance: dist, airTime: v.airTime, landedOnYacht: true });
         }
-      } else if (isPlayer) {
-        this.vfx.spawnWaterSplash(nextX, 0, nextZ);
-        const safe = this.grid.getNearestRoadPoint(v.x, v.z);
-        v.x = safe.x;
-        v.z = safe.z;
-        v.y = this.grid.getGroundHeight(safe.x, safe.z) + 0.5;
-        v.vx = 0;
-        v.vy = 0;
-        v.vz = 0;
-        v.heading = safe.heading;
-        v.grounded = true;
+      } else if (isPlayer || v.driver === 'none') {
+        // Player drove into the ocean -> BIG splash & car starts drowning/sinking!
+        v.submerged = true;
+        v.submergedTimer = 0;
+        v.x = nextX;
+        v.z = nextZ;
+        v.grounded = false;
         v.onStuntRamp = false;
+        this.vfx.spawnWaterSplash(nextX, WATER_LEVEL + 0.2, nextZ);
+        if (isPlayer) {
+          this.events.emit('audio:crash', { intensity: 0.75 });
+          this.events.emit('camera:shake', { amount: 0.5 });
+        }
         return;
       } else {
+        // Keep AI traffic out of the ocean
         v.vx *= -0.5;
         v.vz *= -0.5;
       }

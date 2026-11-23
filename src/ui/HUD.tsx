@@ -45,6 +45,19 @@ export const HUD: React.FC<HUDProps> = ({
     <>
       <div className="speed-lines" style={{ opacity: hud.speedLinesAlpha * 0.85 }} />
       {hud.wantedStars > 0 && <div className="police-vignette" />}
+      {hud.isUnderwater && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 18,
+            pointerEvents: 'none',
+            background:
+              'radial-gradient(circle at 50% 42%, rgba(6, 182, 212, 0.08) 28%, rgba(3, 56, 82, 0.48) 100%)',
+            boxShadow: 'inset 0 0 85px rgba(0, 180, 216, 0.35)',
+          }}
+        />
+      )}
 
       {/* TACTICAL RIFLE / SNIPER SCOPE OVERLAY */}
       {hud.isAiming && (
@@ -252,20 +265,27 @@ export const HUD: React.FC<HUDProps> = ({
           )}
         </div>
 
-        {/* Cash Counter */}
+        {/* Cash Counter (+ Live Hospital Bill Deduction Indicator!) */}
         <div className="glass-panel" style={{ padding: '7px 15px', borderRadius: 12, textAlign: 'right' }}>
           <div
             style={{
               fontSize: 27,
               fontWeight: 950,
-              color: '#22c55e',
+              color: hud.hospitalBillActive ? '#fda4af' : '#22c55e',
               lineHeight: 1,
-              textShadow: '0 0 14px rgba(34, 197, 94, 0.55)',
+              textShadow: hud.hospitalBillActive
+                ? '0 0 14px rgba(255, 42, 85, 0.7)'
+                : '0 0 14px rgba(34, 197, 94, 0.55)',
               fontVariantNumeric: 'tabular-nums',
             }}
           >
             ${hud.cash.toLocaleString()}
           </div>
+          {hud.hospitalBillActive && hud.hospitalBillDeducted > 0 && (
+            <div style={{ fontSize: 11, fontWeight: 950, color: '#ff2a55', marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>
+              -${hud.hospitalBillDeducted.toLocaleString()} HOSPITAL FEE
+            </div>
+          )}
         </div>
 
         {/* Ammo & Weapon Selector (On Foot) OR Compact Speedo / Car Music Player (In Vehicle) */}
@@ -383,13 +403,109 @@ export const HUD: React.FC<HUDProps> = ({
         </div>
       )}
 
-      {!hud.isAiming && (!hud.inVehicle || hud.hitmarkerAlpha > 0.05) && (
+      {!hud.isAiming && !hud.inWater && (!hud.inVehicle || hud.hitmarkerAlpha > 0.05) && (
         <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 22, pointerEvents: 'none' }}>
           <Crosshair
             size={22}
             color={hud.hitmarkerAlpha > 0.1 ? '#ff2a55' : 'rgba(255, 255, 255, 0.7)'}
             style={{ transform: hud.hitmarkerAlpha > 0.1 ? 'scale(1.38) rotate(45deg)' : 'scale(1)', transition: 'transform 0.08s ease' }}
           />
+        </div>
+      )}
+
+      {/* AQUATIC SWIMMING ENERGY / BREATH CONTROL, SCUBA TANK & SINKING VEHICLE HUD (ONLY IN WATER!) */}
+      {(hud.inWater || hud.vehicleSubmerged) && hud.mode === 'playing' && (
+        <div
+          className="glass-panel animate-pop"
+          style={{
+            position: 'fixed',
+            bottom: 18,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 27,
+            padding: '9px 14px',
+            borderRadius: 14,
+            width: 315,
+            maxWidth: 'calc(100vw - 460px)',
+            minWidth: 260,
+            border: `1.5px solid ${
+              hud.vehicleSubmerged || (hud.isUnderwater && hud.swimEnergy <= 0 && !hud.hasScubaGear)
+                ? 'rgba(255, 42, 85, 0.85)'
+                : hud.swimExhausted
+                ? 'rgba(250, 204, 21, 0.8)'
+                : 'rgba(0, 245, 255, 0.65)'
+            }`,
+            pointerEvents: 'none',
+          }}
+        >
+          {hud.vehicleSubmerged && (
+            <div style={{ fontSize: 12, fontWeight: 950, color: '#ff2a55', textAlign: 'center', marginBottom: 6, letterSpacing: '0.08em' }}>
+              ⚠ VEHICLE SINKING — PRESS [E] TO BAIL OUT! (HP {hud.playerHp}%)
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10.5, fontWeight: 900, marginBottom: 4 }}>
+            <span style={{ color: hud.swimExhausted ? '#facc15' : '#67e8f9' }}>
+              {hud.swimExhausted
+                ? `RECOVERING ENERGY (${hud.swimExhaustCooldown.toFixed(1)}s)`
+                : hud.isUnderwater && !(hud.hasScubaGear && hud.scubaOxygenSeconds > 0)
+                ? hud.swimEnergy <= 0
+                  ? 'OUT OF BREATH — DROWNING!'
+                  : `UNDERWATER BREATH • ${hud.swimEnergy}%`
+                : `SWIM ENERGY • ${hud.swimEnergy}%`}
+            </span>
+            {hud.isUnderwater && (
+              <span style={{ color: '#e0f2fe', fontFamily: 'monospace' }}>
+                DEPTH {hud.swimDepthMeters.toFixed(1)}m
+              </span>
+            )}
+          </div>
+
+          <div style={{ width: '100%', height: 9, borderRadius: 99, background: 'rgba(2, 8, 22, 0.85)', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.18)' }}>
+            <div
+              style={{
+                width: `${hud.swimEnergy}%`,
+                height: '100%',
+                background: hud.swimExhausted
+                  ? 'linear-gradient(90deg, #f59e0b, #fde047)'
+                  : hud.swimEnergy < 25
+                  ? 'linear-gradient(90deg, #ef4444, #f97316)'
+                  : 'linear-gradient(90deg, #06b6d4, #22d3ee)',
+                transition: 'width 0.08s linear',
+              }}
+            />
+          </div>
+
+          {hud.hasScubaGear && (
+            <div
+              style={{
+                marginTop: 7,
+                padding: '4px 8px',
+                borderRadius: 8,
+                background: 'rgba(250, 204, 21, 0.14)',
+                border: '1px solid rgba(250, 204, 21, 0.45)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                fontSize: 10,
+                fontWeight: 900,
+                color: '#fde047',
+              }}
+            >
+              <span>SCUBA 7.0L / 63 CU FT</span>
+              <span style={{ fontFamily: 'monospace' }}>
+                {Math.floor(hud.scubaOxygenSeconds / 60)}:{String(hud.scubaOxygenSeconds % 60).padStart(2, '0')} •{' '}
+                {Math.round((hud.scubaOxygenSeconds / Math.max(1, hud.scubaMaxSeconds)) * 3000)} PSI
+              </span>
+            </div>
+          )}
+
+          {!hud.vehicleSubmerged && (
+            <div style={{ marginTop: 5, fontSize: 9.5, color: '#cbd5e1', textAlign: 'center', fontWeight: 700 }}>
+              [WASD] Swim • [SHIFT] Fast Swim • [X / CTRL] Dive Down • [SPACE] Surface
+              {!hud.hasScubaGear && hud.isUnderwater ? ' • Buy Scuba Mask ($75) on Beach!' : ''}
+            </div>
+          )}
         </div>
       )}
 
@@ -442,7 +558,7 @@ export const HUD: React.FC<HUDProps> = ({
           className="glass-panel animate-pop"
           style={{
             position: 'fixed',
-            bottom: 72,
+            bottom: hud.inWater || hud.vehicleSubmerged ? 126 : 72,
             left: '50%',
             transform: 'translateX(-50%)',
             zIndex: 28,

@@ -237,6 +237,8 @@ export interface VehicleEntity {
   hp: number;
   maxHp: number;
   destroyed: boolean;
+  submerged?: boolean;
+  submergedTimer?: number;
   empStunTimer: number;
   odometerMiles: number;
   rpm: number;
@@ -449,7 +451,32 @@ export interface HudSnapshot {
   driftScore: number;
   driftMultiplier: number;
   interactPrompt: string | null;
-  interactKind: 'vehicle' | 'interior_enter' | 'interior_exit' | 'shop' | 'npc' | 'nova' | 'vending' | 'remote_player' | null;
+  interactKind:
+    | 'vehicle'
+    | 'interior_enter'
+    | 'interior_exit'
+    | 'shop'
+    | 'npc'
+    | 'nova'
+    | 'vending'
+    | 'remote_player'
+    | 'dive_shop'
+    | null;
+
+  // Swimming, Underwater Diving, Scuba Gear & Drowning / Hospital Bill
+  inWater: boolean;
+  isUnderwater: boolean;
+  swimDepthMeters: number;
+  swimEnergy: number;
+  swimExhausted: boolean;
+  swimExhaustCooldown: number;
+  hasScubaGear: boolean;
+  scubaOxygenSeconds: number;
+  scubaMaxSeconds: number;
+  vehicleSubmerged: boolean;
+  hospitalBillTotal: number;
+  hospitalBillDeducted: number;
+  hospitalBillActive: boolean;
 
   // Weapon / Combat state
   weapon: WeaponId;

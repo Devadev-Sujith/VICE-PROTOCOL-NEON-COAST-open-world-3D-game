@@ -35,6 +35,11 @@ export interface CityNpc {
   staggerVz: number;
   tintColor: number;
   useOpenSourceModel: boolean;
+  stuckTimer: number;
+  turnCooldown: number;
+  lastCheckX: number;
+  lastCheckZ: number;
+  checkAccum: number;
 }
 
 const NPC_PROFILES = [
@@ -112,6 +117,11 @@ export class PedestrianAI {
         staggerVz: 0,
         tintColor,
         useOpenSourceModel: i % 5 === 0 || i % 5 === 2,
+        stuckTimer: 0,
+        turnCooldown: 0,
+        lastCheckX: pt.x,
+        lastCheckZ: pt.z,
+        checkAccum: 0,
       };
       this.peds.push(npc);
     }
@@ -144,25 +154,40 @@ export class PedestrianAI {
     }
   }
 
+  /** Strict safe dry sidewalk/plaza bounds (keeps NPCs safely away from seawalls, ocean edges & NW bay rims!) */
+  private isSafePedPos(x: number, z: number): boolean {
+    if (x < -202 || x > 206 || z < -202 || z > 202) return false;
+    if (this.grid.isWater(x, z)) return false;
+    // Keep 4m safety buffer away from the NW Causeway bay channel walls
+    if (x >= -146 && x <= -104 && z <= -104) return false;
+    if (z >= -146 && z <= -104 && x <= -104) return false;
+    return true;
+  }
+
   private pickSpawnPoint(i: number): { x: number; z: number } {
-    let x = 196;
-    let z = -180 + ((i * 21) % 360);
-    if (i >= 10) {
-      const road = ROAD_COORDS[i % ROAD_COORDS.length];
-      const side = i % 2 === 0 ? 10.6 : -10.6;
-      if (i % 3 === 0) {
-        x = road + side;
-        z = -155 + ((i * 37) % 310);
-      } else {
-        x = -155 + ((i * 43) % 310);
-        z = road + side;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const k = i + attempt * 7;
+      let x = 194;
+      let z = -165 + ((k * 23) % 330);
+      if (k >= 10) {
+        const road = ROAD_COORDS[k % ROAD_COORDS.length];
+        const side = k % 2 === 0 ? 10.2 : -10.2;
+        if (k % 3 === 0) {
+          x = road + side;
+          z = -150 + ((k * 37) % 300);
+        } else {
+          x = -150 + ((k * 43) % 300);
+          z = road + side;
+        }
+      }
+      if (this.isSafePedPos(x, z)) {
+        const col = this.grid.resolveCircleCollision(x, z, 0.55, 0);
+        if (!col.hit && this.isSafePedPos(col.x, col.z)) {
+          return { x: col.x, z: col.z };
+        }
       }
     }
-    if (this.grid.isWater(x, z)) {
-      x = 195;
-      z = (i * 17) % 150;
-    }
-    return { x, z };
+    return { x: 192, z: -60 + ((i * 19) % 140) };
   }
 
   /** GTA-style NPC damage with visceral crimson blood spatter, knockback & expanding asphalt blood pools! */
@@ -308,30 +333,83 @@ export class PedestrianAI {
         p.heading = Math.atan2(dx, dz) + (Math.random() - 0.5) * 0.4;
       }
 
-      // Apply knockback stagger decay
+      // Apply knockback stagger decay (safely clamped within walkable city bounds!)
       if (Math.hypot(p.staggerVx, p.staggerVz) > 0.2) {
-        p.x += p.staggerVx * dt;
-        p.z += p.staggerVz * dt;
+        const sx = p.x + p.staggerVx * dt;
+        const sz = p.z + p.staggerVz * dt;
+        if (this.isSafePedPos(sx, sz)) {
+          const scol = this.grid.resolveCircleCollision(sx, sz, 0.45, 0);
+          if (this.isSafePedPos(scol.x, scol.z)) {
+            p.x = scol.x;
+            p.z = scol.z;
+          }
+        }
         p.staggerVx *= Math.max(0, 1 - dt * 9);
         p.staggerVz *= Math.max(0, 1 - dt * 9);
       }
 
+      if (p.turnCooldown > 0) p.turnCooldown = Math.max(0, p.turnCooldown - dt);
+
       const fleeing = p.fleeTimer > 0;
-      const moveSpd = fleeing ? 6.8 : p.speed;
+      const moveSpd = fleeing ? 6.6 : p.speed;
       if (p.fleeTimer > 0) p.fleeTimer -= dt;
-      else if (Math.random() < 0.008) p.heading += (Math.random() - 0.5) * 1.4;
+      else if (Math.random() < 0.008 && p.turnCooldown <= 0) p.heading += (Math.random() - 0.5) * 1.1;
 
       const nx = p.x + Math.sin(p.heading) * moveSpd * dt;
       const nz = p.z + Math.cos(p.heading) * moveSpd * dt;
 
-      if (this.grid.isWater(nx, nz) || Math.abs(nx) > 235 || Math.abs(nz) > 235) {
-        p.heading += Math.PI * 0.85;
+      // Bulletproof inward steering at world edges & building corners (NEVER oscillates or glitches!)
+      let blocked = false;
+      if (!this.isSafePedPos(nx, nz)) {
+        blocked = true;
       } else {
-        const col = this.grid.resolveCircleCollision(nx, nz, 0.42, 0);
-        if (col.hit) p.heading += Math.PI * 0.65;
-        else {
+        const col = this.grid.resolveCircleCollision(nx, nz, 0.46, 0);
+        if (col.hit || !this.isSafePedPos(col.x, col.z)) {
+          blocked = true;
+        } else {
           p.x = col.x;
           p.z = col.z;
+        }
+      }
+
+      if (blocked) {
+        if (p.turnCooldown <= 0) {
+          const safe = this.grid.getNearestRoadPoint(p.x, p.z);
+          const inward = Math.atan2(safe.x - p.x, safe.z - p.z);
+          p.heading = inward + (Math.random() - 0.5) * 0.65;
+          p.turnCooldown = 0.35;
+        }
+        // Gently nudge away from boundary if already outside safe bounds
+        if (!this.isSafePedPos(p.x, p.z)) {
+          const safe = this.grid.getNearestRoadPoint(p.x, p.z);
+          p.x += (safe.x - p.x) * Math.min(1, dt * 4);
+          p.z += (safe.z - p.z) * Math.min(1, dt * 4);
+        }
+      }
+
+      // Anti-stuck watchdog: guarantees zero NPCs ever stay frozen or jittering anywhere in the city!
+      p.checkAccum += dt;
+      if (p.checkAccum >= 0.6) {
+        const movedDist = Math.hypot(p.x - p.lastCheckX, p.z - p.lastCheckZ);
+        p.lastCheckX = p.x;
+        p.lastCheckZ = p.z;
+        p.checkAccum = 0;
+        if (movedDist < 0.32) {
+          p.stuckTimer += 0.6;
+          const safe = this.grid.getNearestRoadPoint(p.x, p.z);
+          p.heading = Math.atan2(safe.x - p.x, safe.z - p.z);
+          p.turnCooldown = 0.4;
+          if (p.stuckTimer >= 1.8) {
+            const pt = this.pickSpawnPoint(i + Math.floor(Math.random() * 13));
+            p.x = pt.x;
+            p.z = pt.z;
+            p.lastCheckX = pt.x;
+            p.lastCheckZ = pt.z;
+            p.stuckTimer = 0;
+            p.fleeTimer = 0;
+          }
+        } else {
+          p.stuckTimer = 0;
         }
       }
 

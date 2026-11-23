@@ -127,6 +127,52 @@ export const Overlays: React.FC<OverlaysProps> = ({ hud, onContinueVictory }) =>
               {b.subtitle}
             </div>
           )}
+          {!isBusted && hud.hospitalBillTotal > 0 && (
+            <div
+              className="glass-panel"
+              style={{
+                marginTop: 22,
+                padding: '14px 26px',
+                borderRadius: 16,
+                border: '1.5px solid rgba(255, 42, 85, 0.7)',
+                display: 'inline-flex',
+                flexDirection: 'column',
+                gap: 6,
+                minWidth: 320,
+              }}
+            >
+              <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.16em', color: '#fda4af' }}>
+                OCEAN DRIVE MEDICAL CENTER • HOSPITAL BILL
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 18 }}>
+                <span style={{ fontSize: 13, fontWeight: 800, color: '#e2e8f0' }}>MEDICAL DEDUCTION:</span>
+                <span
+                  style={{
+                    fontSize: 24,
+                    fontWeight: 950,
+                    color: '#ff2a55',
+                    fontVariantNumeric: 'tabular-nums',
+                    textShadow: '0 0 12px rgba(255,42,85,0.75)',
+                  }}
+                >
+                  -${hud.hospitalBillDeducted.toLocaleString()}
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 18, borderTop: '1px solid rgba(255,255,255,0.14)', paddingTop: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 800, color: '#94a3b8' }}>LIVE BANK BALANCE:</span>
+                <span
+                  style={{
+                    fontSize: 20,
+                    fontWeight: 950,
+                    color: '#22c55e',
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  ${hud.cash.toLocaleString()}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );

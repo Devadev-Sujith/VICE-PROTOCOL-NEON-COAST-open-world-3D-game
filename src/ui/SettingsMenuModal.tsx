@@ -25,7 +25,7 @@ interface SettingsMenuModalProps {
   onSpawnHypercar: () => void;
   onAddCash: () => void;
   onTeleport: (
-    loc: 'ocean' | 'downtown' | 'docks' | 'causeway' | 'pier' | 'mall' | 'cafe' | 'clothes' | 'helipad' | 'marina'
+    loc: 'ocean' | 'downtown' | 'docks' | 'causeway' | 'pier' | 'mall' | 'cafe' | 'clothes' | 'helipad' | 'marina' | 'dive_shop'
   ) => void;
 }
 
@@ -177,6 +177,7 @@ export const SettingsMenuModal: React.FC<SettingsMenuModalProps> = ({
                   ['mall', 'Neon Coast Mall'],
                   ['clothes', 'VICE Drip Clothes'],
                   ['marina', 'Speedboat Marina'],
+                  ['dive_shop', 'Beach Scuba Shop ($75)'],
                   ['helipad', 'Helipad (Chopper)'],
                   ['ocean', 'Ocean Drive'],
                   ['downtown', 'Neon Strip'],
@@ -214,8 +215,8 @@ export const SettingsMenuModal: React.FC<SettingsMenuModalProps> = ({
               <span><b>C</b> — 3rd-Person ↔ 1st-Person Cockpit / Walk ↔ Top-Down</span>
               <span><b>E</b> — Enter/Exit Car, Boat, Chopper, Talk, Shop</span>
               <span><b>Walk into Glass Doors</b> — Instant Seamless Building Entry</span>
-              <span><b>Space / Shift</b> — Drift & Nitro (Car) • Climb (Chopper)</span>
-              <span><b>X / Ctrl</b> — Descend (Chopper) • <b>Tab</b> Phone • <b>M</b> Map</span>
+              <span><b>Space / Shift</b> — Drift & Nitro • Fast Swim / Surface</span>
+              <span><b>X / Ctrl</b> — Dive Underwater / Descend Chopper • <b>Tab</b> Phone • <b>M</b> Map</span>
             </div>
           </div>
         </div>

@@ -245,7 +245,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                   whiteSpace: 'nowrap',
                 }}
               >
-                {avatar.name || 'Vex'}
+                {avatar.name.trim() || 'Player'}
               </div>
               <svg width="74" height="96" viewBox="0 0 80 104">
                 {/* Flowing Long Hair Back */}

@@ -214,9 +214,19 @@ export const Minimap: React.FC<MinimapProps> = ({ hud, onOpenFullMap }) => {
     ctx.restore();
   }, [hud]);
 
-  const hpPct = hud.inVehicle
-    ? Math.max(0, Math.min(100, (hud.vehicleHp / Math.max(1, hud.vehicleMaxHp)) * 100))
-    : Math.max(0, Math.min(100, (hud.playerHp / Math.max(1, hud.playerMaxHp)) * 100));
+  const showPlayerHp = !hud.inVehicle || hud.vehicleSubmerged;
+  const hpPct = showPlayerHp
+    ? Math.max(0, Math.min(100, (hud.playerHp / Math.max(1, hud.playerMaxHp)) * 100))
+    : Math.max(0, Math.min(100, (hud.vehicleHp / Math.max(1, hud.vehicleMaxHp)) * 100));
+  const secondBarPct = hud.inWater || hud.vehicleSubmerged ? hud.swimEnergy : hud.nitro;
+  const secondBarLabel =
+    hud.inWater || hud.vehicleSubmerged
+      ? hud.swimExhausted
+        ? `REFILL ${hud.swimExhaustCooldown.toFixed(1)}s`
+        : hud.isUnderwater && !hud.hasScubaGear
+        ? `BREATH ${hud.swimEnergy}%`
+        : `ENERGY ${hud.swimEnergy}%`
+      : `NITRO ${hud.nitro}%`;
 
   return (
     <div
@@ -312,9 +322,14 @@ export const Minimap: React.FC<MinimapProps> = ({ hud, onOpenFullMap }) => {
         >
           <div
             style={{
-              width: `${hud.nitro}%`,
+              width: `${secondBarPct}%`,
               height: '100%',
-              background: 'linear-gradient(90deg, #0ea5e9, #00f5ff)',
+              background:
+                hud.swimExhausted
+                  ? 'linear-gradient(90deg, #f59e0b, #fde047)'
+                  : (hud.inWater || hud.vehicleSubmerged) && hud.swimEnergy < 25
+                  ? 'linear-gradient(90deg, #ef4444, #f97316)'
+                  : 'linear-gradient(90deg, #0ea5e9, #00f5ff)',
               boxShadow: '0 0 8px rgba(0,245,255,0.7)',
               transition: 'width 0.08s linear',
             }}
@@ -322,8 +337,8 @@ export const Minimap: React.FC<MinimapProps> = ({ hud, onOpenFullMap }) => {
         </div>
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, fontWeight: 700, color: '#cbd5e1', padding: '0 2px' }}>
-        <span>{hud.inVehicle ? 'VEHICLE ARMOR' : 'HEALTH'} {Math.round(hpPct)}%</span>
-        <span style={{ color: '#00f5ff' }}>NITRO {hud.nitro}%</span>
+        <span>{showPlayerHp ? 'HEALTH' : 'VEHICLE ARMOR'} {Math.round(hpPct)}%</span>
+        <span style={{ color: hud.swimExhausted ? '#facc15' : '#00f5ff' }}>{secondBarLabel}</span>
       </div>
     </div>
   );

@@ -21,6 +21,7 @@ import { ParticlesVFX } from '../systems/ParticlesVFX';
 import { PedestrianAI } from '../systems/PedestrianAI';
 import { SentientAI } from '../systems/SentientAI';
 import { TrafficAI } from '../systems/TrafficAI';
+import { UnderwaterWorld } from '../systems/UnderwaterWorld';
 import { WantedSystem } from '../systems/WantedSystem';
 import { STREET_RACES, WorldActivities } from '../systems/WorldActivities';
 import { CityBuilder } from '../world/CityBuilder';
@@ -28,6 +29,7 @@ import {
   BOAT_DOCK_POSITIONS,
   BUILDING_ENTRANCES,
   CityGrid,
+  DIVE_SHOP_POS,
   HELIPAD_POSITIONS,
   HOSPITAL_RESPAWN,
   PAY_N_SPRAY_POS,
@@ -35,6 +37,7 @@ import {
   STUNT_RAMPS,
   VALET_PLAZA_POS,
   VAULT_PLAZA_POS,
+  WATER_LEVEL,
 } from '../world/CityGrid';
 import { InteriorBuilder, SHOP_CATALOG } from '../world/InteriorBuilder';
 import { createProceduralTextures } from '../world/ProceduralTextures';
@@ -82,6 +85,7 @@ export class GameEngine {
   public sky: SkyAndLighting;
   public cityBuilder: CityBuilder;
   public interiors: InteriorBuilder;
+  public underwater: UnderwaterWorld;
   public vfx: ParticlesVFX;
   public audio = new AudioEngine();
   public vehiclePhysics: VehiclePhysics;
@@ -158,6 +162,12 @@ export class GameEngine {
   private deathRecoverTimer = 0;
   private dashRedrawAccum = 0;
 
+  // Live animated Hospital Billing on WASTED
+  private hospitalBillTotal = 0;
+  private hospitalBillDeducted = 0;
+  private hospitalBillActive = false;
+  private hospitalTickAccum = 0;
+
   // Input tracking (smooth mouse-move look without needing click-drag!)
   private keys = new Set<string>();
   private mouseDown = false;
@@ -210,6 +220,7 @@ export class GameEngine {
     this.cityBuilder = new CityBuilder(this.scene, this.grid, textures);
     this.cityBuilder.build();
     this.interiors = new InteriorBuilder(this.scene);
+    this.underwater = new UnderwaterWorld(this.scene, this.grid);
 
     // Subtle Neon Rain particle system (toggleable in Settings!)
     this.rainPoints = this.createRainSystem();
@@ -406,6 +417,10 @@ export class GameEngine {
 
     this.vehiclePhysics.onBarrelExploded = (x, y, z) => {
       this.combat.triggerAreaExplosion(x, y, z, 14, 95, this.getAllVehicles());
+    };
+
+    this.vehiclePhysics.onSubmergedBubble = (x, y, z) => {
+      this.underwater.spawnBubble(x, y, z, 1.35);
     };
 
     this.activities.onCashEarned = (amount) => {
@@ -708,10 +723,30 @@ export class GameEngine {
 
     if (this.playerVehicle) {
       return {
-        prompt: `[E] EXIT ${this.playerVehicle.stats.name}`,
+        prompt: this.playerVehicle.submerged
+          ? `[E] BAIL OUT OF SINKING ${this.playerVehicle.stats.name}!`
+          : `[E] EXIT ${this.playerVehicle.stats.name}`,
         kind: 'vehicle',
         execute: () => this.exitCurrentVehicle(),
       };
+    }
+
+    // Check Shoreline Scuba Dive Shop ($75 7.0L / 63 cu ft Oxygen Mask & Tank — 30 min underwater!)
+    if (Math.hypot(this.player.x - DIVE_SHOP_POS.x, this.player.z - DIVE_SHOP_POS.z) < 6.2) {
+      if (!this.player.hasScubaGear) {
+        return {
+          prompt: '[E] BUY SCUBA OXYGEN MASK & 7L TANK ($75 • 30 MIN AIR)',
+          kind: 'dive_shop',
+          execute: () => this.buyScubaGear(false),
+        };
+      }
+      if (this.player.scubaOxygenSeconds < this.player.scubaMaxSeconds - 30) {
+        return {
+          prompt: '[E] REFILL 7L SCUBA TANK TO 3,000 PSI ($25 • 30 MIN AIR)',
+          kind: 'dive_shop',
+          execute: () => this.buyScubaGear(true),
+        };
+      }
     }
 
     // Check nearby online multiplayer player -> Add Friend or Message!
@@ -853,8 +888,8 @@ export class GameEngine {
   }
 
   public setAvatarConfig(cfg: AvatarConfig): void {
-    const cleanName = cfg.name.trim().slice(0, 18) || DEFAULT_AVATAR.name;
-    this.avatar = { ...cfg, name: cleanName };
+    // Preserve raw string while typing/backspacing so the user can completely clear the default name ("Vex")!
+    this.avatar = { ...cfg, name: cfg.name.slice(0, 18) };
     this.player.applyAvatarConfig(this.avatar);
     try {
       localStorage.setItem('neon_coast_avatar_v1', JSON.stringify(this.avatar));
@@ -862,6 +897,27 @@ export class GameEngine {
       // ignore
     }
     this.pushHudSnapshot();
+  }
+
+  public buyScubaGear(isRefill = false): boolean {
+    const cost = isRefill ? 25 : 75;
+    if (this.cash < cost) {
+      this.radioToast = `NEED $${cost} FOR SCUBA OXYGEN GEAR!`;
+      this.radioToastTtl = 2.4;
+      return false;
+    }
+    this.cash -= cost;
+    this.player.equipScubaGear();
+    this.audio.playCash();
+    this.events.emit('ui:banner', {
+      kind: 'unlock',
+      title: isRefill ? 'SCUBA TANK REFILLED!' : 'SCUBA OXYGEN MASK EQUIPPED!',
+      subtitle: '63 cu. ft. (7.0L • 3,000 PSI) Tank • 30 Minutes of Underwater Swimming',
+      rewardText: `-$${cost}`,
+      duration: 3.4,
+    });
+    this.pushHudSnapshot();
+    return true;
   }
 
   // === ONLINE MULTIPLAYER FRIENDS, DMs & CO-OP MISSIONS ===
@@ -1049,8 +1105,18 @@ export class GameEngine {
     }
   }
 
+  private ensureFinalAvatarName(): void {
+    const trimmed = this.avatar.name.trim();
+    if (!trimmed) {
+      this.setAvatarConfig({ ...this.avatar, name: DEFAULT_AVATAR.name });
+    } else if (trimmed !== this.avatar.name) {
+      this.setAvatarConfig({ ...this.avatar, name: trimmed });
+    }
+  }
+
   public startCampaign(): void {
     this.audio.unlock();
+    this.ensureFinalAvatarName();
     this.mode = 'playing';
     this.banner = null;
     this.missions.startMission(this.missions.getNextCampaignMissionId());
@@ -1061,6 +1127,7 @@ export class GameEngine {
 
   public startFreeRoam(): void {
     this.audio.unlock();
+    this.ensureFinalAvatarName();
     this.mode = 'playing';
     this.banner = null;
     this.missions.clearActiveMission();
@@ -1282,7 +1349,7 @@ export class GameEngine {
   }
 
   public demoTeleport(
-    loc: 'ocean' | 'downtown' | 'docks' | 'causeway' | 'pier' | 'mall' | 'cafe' | 'clothes' | 'helipad' | 'marina'
+    loc: 'ocean' | 'downtown' | 'docks' | 'causeway' | 'pier' | 'mall' | 'cafe' | 'clothes' | 'helipad' | 'marina' | 'dive_shop'
   ): void {
     if (this.currentInterior) this.exitInterior();
     const spots: Record<typeof loc, { x: number; z: number; h: number; exitCar?: boolean }> = {
@@ -1296,6 +1363,7 @@ export class GameEngine {
       clothes: { x: 174, z: -10, h: -Math.PI / 2, exitCar: true },
       helipad: { x: 158, z: 135, h: -Math.PI / 2, exitCar: true },
       marina: { x: 243, z: 22, h: Math.PI / 2, exitCar: true },
+      dive_shop: { x: DIVE_SHOP_POS.x + 4.2, z: DIVE_SHOP_POS.z, h: Math.PI / 2, exitCar: true },
     };
     const s = spots[loc];
     if (s.exitCar && this.playerVehicle) this.exitCurrentVehicle();
@@ -1322,7 +1390,7 @@ export class GameEngine {
     let best: VehicleEntity | null = null;
     let bestD = 12.5;
     for (const v of all) {
-      if (v.destroyed) continue;
+      if (v.destroyed || v.submerged) continue;
       const limit = v.stats.domain === 'water' ? 12.5 : v.stats.domain === 'air' ? 8.5 : 6.0;
       const d = Math.hypot(v.x - this.player.x, v.z - this.player.z);
       if (d < limit && d < bestD) {
@@ -1343,18 +1411,28 @@ export class GameEngine {
     }
     if (v.cockpit) v.cockpit.group.visible = false;
 
-    let exitX = v.x - Math.cos(v.heading) * (v.stats.width * 0.5 + 1.45);
-    let exitZ = v.z + Math.sin(v.heading) * (v.stats.width * 0.5 + 1.45);
-    if (v.stats.domain === 'water') {
-      const safe = this.grid.isWater(exitX, exitZ) ? { x: 236, z: Math.max(-180, Math.min(180, v.z)) } : { x: exitX, z: exitZ };
-      exitX = safe.x;
-      exitZ = safe.z;
-    }
+    const exitX = v.x - Math.cos(v.heading) * (v.stats.width * 0.5 + 1.55);
+    const exitZ = v.z + Math.sin(v.heading) * (v.stats.width * 0.5 + 1.55);
+    const inDeepWater = this.grid.isWater(exitX, exitZ);
 
     v.driver = 'none';
     this.playerVehicle = null;
-    this.player.teleport(exitX, Math.max(0.05, this.grid.getGroundHeight(exitX, exitZ)), exitZ, v.heading);
-    this.player.setVisible(true);
+    if (v.submerged || v.stats.domain === 'water' || inDeepWater) {
+      // Bail out directly into the ocean and seamlessly begin swimming/diving!
+      const seabed = this.grid.getSeabedHeight(exitX, exitZ);
+      const exitY = v.submerged
+        ? Math.max(seabed + 0.55, Math.min(WATER_LEVEL - 1.25, v.y + 0.6))
+        : WATER_LEVEL - 1.25;
+      this.player.teleport(exitX, exitY, exitZ, v.heading);
+      this.player.inWater = true;
+      this.player.setVisible(true);
+      this.vfx.spawnWaterSplash(exitX, WATER_LEVEL + 0.1, exitZ);
+      this.radioToast = v.submerged ? 'ESCAPED SINKING CAR! SWIM TO SHORE!' : 'SWIMMING • [SHIFT] FAST SWIM • [X/CTRL] DIVE';
+      this.radioToastTtl = 3.0;
+    } else {
+      this.player.teleport(exitX, Math.max(0.05, this.grid.getGroundHeight(exitX, exitZ)), exitZ, v.heading);
+      this.player.setVisible(true);
+    }
     this.cameraRig.yaw = v.heading + Math.PI;
     if (this.cameraRig.mode === 'interior') this.cameraRig.mode = 'chase';
   }
@@ -1391,19 +1469,30 @@ export class GameEngine {
     }
   }
 
-  private triggerWasted(): void {
+  private triggerWasted(wasDrowned = false): void {
+    if (this.mode === 'wasted') return;
     this.mode = 'wasted';
-    this.deathRecoverTimer = 3.2;
+    this.deathRecoverTimer = 4.2;
     this.scopeToggle = false;
     this.exitPointerLock();
     this.missions.clearActiveMission();
     this.activities.stopStreetRace();
     this.wanted.setStars(0);
+
+    // Realistic GTA Medical Resuscitation Bill — smoothly live-deducted from bank balance during WASTED!
+    const rawBill = Math.max(250, Math.min(1000, Math.round(this.cash * 0.12)));
+    this.hospitalBillTotal = Math.min(this.cash, rawBill);
+    this.hospitalBillDeducted = 0;
+    this.hospitalBillActive = this.hospitalBillTotal > 0;
+    this.hospitalTickAccum = 0;
+
     this.events.emit('ui:banner', {
       kind: 'wasted',
       title: 'WASTED',
-      subtitle: 'Respawning at Ocean Drive Medical Plaza...',
-      duration: 3.1,
+      subtitle: wasDrowned
+        ? 'Drowned at Sea — Emergency Airlift to Ocean Drive Medical Center'
+        : 'Emergency Resuscitation at Ocean Drive Medical Center',
+      duration: 4.1,
     });
     this.pushHudSnapshot();
   }
@@ -1428,10 +1517,31 @@ export class GameEngine {
 
   private respawnAfterDown(wasBusted: boolean): void {
     const pt = wasBusted ? PRECINCT_RESPAWN : HOSPITAL_RESPAWN;
+    // Finalize any remaining hospital deduction pennies cleanly!
+    if (!wasBusted && this.hospitalBillActive && this.hospitalBillDeducted < this.hospitalBillTotal) {
+      const rem = this.hospitalBillTotal - this.hospitalBillDeducted;
+      this.cash = Math.max(0, this.cash - rem);
+      this.hospitalBillDeducted = this.hospitalBillTotal;
+    }
+    this.hospitalBillActive = false;
+
     this.mode = 'playing';
     this.banner = null;
     this.player.hp = this.player.maxHp;
-    if (this.playerVehicle && !this.playerVehicle.destroyed && this.playerVehicle.stats.domain === 'land') {
+    this.player.swimEnergy = 100;
+    this.player.swimExhausted = false;
+    this.player.swimExhaustCooldown = 0;
+    this.player.inWater = false;
+    this.player.isUnderwater = false;
+    this.player.swimDepthMeters = 0;
+
+    if (this.playerVehicle && (this.playerVehicle.submerged || this.playerVehicle.destroyed)) {
+      if (this.playerVehicle.cockpit) this.playerVehicle.cockpit.group.visible = false;
+      this.playerVehicle.driver = 'none';
+      this.playerVehicle = null;
+    }
+
+    if (this.playerVehicle && this.playerVehicle.stats.domain === 'land') {
       this.playerVehicle.hp = this.playerVehicle.maxHp;
       this.playerVehicle.x = pt.x;
       this.playerVehicle.z = pt.z;
@@ -1440,11 +1550,18 @@ export class GameEngine {
       this.playerVehicle.vz = 0;
       this.playerVehicle.heading = Math.PI;
     } else {
-      this.summonVehicle('muscle');
-      if (this.playerVehicle) {
-        this.playerVehicle.x = pt.x;
-        this.playerVehicle.z = pt.z;
-      }
+      // Respawn cleanly outside Ocean Drive Medical Center (with fresh coupe parked beside hospital curb!)
+      const curbY = Math.max(0.1, this.grid.getGroundHeight(pt.x + 4, pt.z));
+      this.player.teleport(pt.x + 4.5, curbY, pt.z, Math.PI);
+      this.player.setVisible(true);
+      this.cameraRig.snapTo(pt.x + 4.5, curbY, pt.z, Math.PI, false);
+      const fresh = createVehicleEntity('muscle', pt.x, this.grid.getGroundHeight(pt.x, pt.z) + 0.1, pt.z, Math.PI, 'none', 0x00c8ff);
+      this.scene.add(fresh.mesh);
+      this.playerGarageVehicles.push(fresh);
+    }
+    if (!wasBusted && this.hospitalBillTotal > 0) {
+      this.radioToast = `DISCHARGED FROM OCEAN DRIVE MEDICAL • -$${this.hospitalBillTotal.toLocaleString()} BILLED`;
+      this.radioToastTtl = 3.5;
     }
     this.pushHudSnapshot();
   }
@@ -1516,6 +1633,18 @@ export class GameEngine {
     if (this.mode === 'wasted' || this.mode === 'busted') {
       timeScale = 0.25;
       this.deathRecoverTimer -= rawDt;
+      // Live animated Hospital Bill deduction directly out of player's bank balance!
+      if (this.mode === 'wasted' && this.hospitalBillActive && this.deathRecoverTimer < 3.45 && this.hospitalBillDeducted < this.hospitalBillTotal) {
+        const rem = this.hospitalBillTotal - this.hospitalBillDeducted;
+        const step = Math.min(rem, Math.max(1, Math.round((this.hospitalBillTotal / 1.9) * rawDt)));
+        this.cash = Math.max(0, this.cash - step);
+        this.hospitalBillDeducted += step;
+        this.hospitalTickAccum += step;
+        if (this.hospitalTickAccum >= 95) {
+          this.hospitalTickAccum = 0;
+          this.audio.playCash();
+        }
+      }
       if (this.deathRecoverTimer <= 0) this.respawnAfterDown(this.mode === 'busted');
     }
 
@@ -1572,6 +1701,7 @@ export class GameEngine {
         this.vehiclePhysics.stepVehicle(tv, inp, dt, this.upgrades, this.cityBuilder.destructibles, allVehicles, this.elapsed);
       }
       this.peds.update(dt, 9999, 9999, 0, false);
+      this.underwater.update(dt, this.elapsed, 260, 0, 0, false);
       this.cameraRig.updateTitleFlyover(this.elapsed);
       this.composer.render();
       return;
@@ -1611,6 +1741,22 @@ export class GameEngine {
           allVehicles,
           this.elapsed
         );
+
+        // SINKING CAR DROWNING MECHANIC! Stay trapped underwater -> HP drains gradually until WASTED!
+        if (pv.submerged && pv.y < WATER_LEVEL - 0.35) {
+          const activeScuba = this.player.hasScubaGear && this.player.scubaOxygenSeconds > 0;
+          if (activeScuba) {
+            this.player.scubaOxygenSeconds = Math.max(0, this.player.scubaOxygenSeconds - dt);
+          } else {
+            this.player.swimEnergy = Math.max(0, this.player.swimEnergy - 24 * dt);
+            if (pv.y < WATER_LEVEL - 0.85 || this.player.swimEnergy <= 0) {
+              this.player.hp = Math.max(0, this.player.hp - 14.5 * dt);
+              if (this.player.hp <= 0) {
+                this.triggerWasted(true);
+              }
+            }
+          }
+        }
 
         // Near-Miss High-Speed Bonus!
         if (pv.stats.domain === 'land' && Math.abs(pv.speed) > 24 && this.nearMissCooldown <= 0) {
@@ -1685,11 +1831,13 @@ export class GameEngine {
 
         this.player.update(
           dt,
+          this.elapsed,
           {
             forward: fwd,
             right,
             sprint: !this.uiBlockInput && (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')),
             jump: !this.uiBlockInput && this.keys.has('Space'),
+            diveDown: !this.uiBlockInput && (this.keys.has('KeyX') || this.keys.has('ControlLeft')),
             fire: !this.uiBlockInput && (this.keys.has('KeyQ') || this.mouseDown),
             aiming: isAiming,
           },
@@ -1720,6 +1868,17 @@ export class GameEngine {
           },
           (ox, oy, oz, dx, dz) => {
             this.combat.performMeleePunch(ox, oy, oz, dx, dz, this.peds);
+          },
+          (sx, sy, sz, fast) => {
+            if (fast) this.vfx.spawnWaterSplash(sx, sy + 0.04, sz);
+            else this.vfx.spawnTireSmoke(sx, sy + 0.04, sz);
+          },
+          (bx, by, bz) => {
+            this.underwater.spawnBubble(bx, by, bz, 0.9);
+          },
+          (dmg) => {
+            this.player.hp = Math.max(0, this.player.hp - dmg);
+            if (this.player.hp <= 0) this.triggerWasted(true);
           }
         );
 
@@ -1740,6 +1899,12 @@ export class GameEngine {
 
       const posNow = this.getPlayerPos();
 
+      // Continue sinking any abandoned submerged cars smoothly down to the seabed!
+      for (const gv of this.playerGarageVehicles) {
+        if (gv !== this.playerVehicle && gv.submerged) {
+          this.vehiclePhysics.stepVehicle(gv, { throttle: 0, steer: 0, handbrake: false, nitro: false }, dt, this.upgrades, [], allVehicles, this.elapsed);
+        }
+      }
       for (const b of this.worldBoats) {
         if (b !== this.playerVehicle) {
           this.vehiclePhysics.stepVehicle(b, { throttle: 0, steer: 0, handbrake: false, nitro: false }, dt, this.upgrades, [], allVehicles, this.elapsed);
@@ -1852,6 +2017,8 @@ export class GameEngine {
 
     this.vfx.update(dt);
     const camTarget = this.getPlayerPos();
+    const allowUnderwater = !this.currentInterior && (this.player.inWater || !!this.playerVehicle?.submerged);
+    const seabedFloorY = this.currentInterior ? 0 : this.grid.getSeabedHeight(camTarget.x, camTarget.z);
     const scopeFov = this.player.weapon === 'sniper' ? 15 : this.player.weapon === 'ak47' ? 24 : 38;
     this.cameraRig.updateGameplay(
       rawDt,
@@ -1864,8 +2031,14 @@ export class GameEngine {
       isAiming,
       scopeFov,
       this.vehiclePhysics.activeStuntSlowMo,
-      !!this.currentInterior
+      !!this.currentInterior,
+      allowUnderwater,
+      seabedFloorY
     );
+
+    const camUnderwater = !this.currentInterior && this.camera.position.y < WATER_LEVEL - 0.04;
+    this.sky.setUnderwaterState(camUnderwater, Math.max(0, WATER_LEVEL - this.camera.position.y), !!this.currentInterior);
+    this.underwater.update(dt, this.elapsed, camTarget.x, camTarget.y, camTarget.z, camUnderwater);
 
     this.audio.update(
       rawDt,
@@ -2035,6 +2208,24 @@ export class GameEngine {
       driftMultiplier: this.vehiclePhysics.driftMultiplier,
       interactPrompt: interaction?.prompt ?? null,
       interactKind: interaction?.kind ?? null,
+
+      inWater: this.player.inWater,
+      isUnderwater: this.player.isUnderwater || (!!this.playerVehicle?.submerged && this.playerVehicle.y < WATER_LEVEL - 0.65),
+      swimDepthMeters: this.player.isUnderwater
+        ? Math.round(this.player.swimDepthMeters * 10) / 10
+        : this.playerVehicle?.submerged
+        ? Math.max(0, Math.round((WATER_LEVEL - this.playerVehicle.y) * 10) / 10)
+        : 0,
+      swimEnergy: Math.round(this.player.swimEnergy),
+      swimExhausted: this.player.swimExhausted,
+      swimExhaustCooldown: Math.round(this.player.swimExhaustCooldown * 10) / 10,
+      hasScubaGear: this.player.hasScubaGear,
+      scubaOxygenSeconds: Math.round(this.player.scubaOxygenSeconds),
+      scubaMaxSeconds: this.player.scubaMaxSeconds,
+      vehicleSubmerged: !!this.playerVehicle?.submerged,
+      hospitalBillTotal: this.hospitalBillTotal,
+      hospitalBillDeducted: this.hospitalBillDeducted,
+      hospitalBillActive: this.hospitalBillActive,
 
       weapon: this.player.weapon,
       weaponLabel: WEAPON_LABELS[this.player.weapon],

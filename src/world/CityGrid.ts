@@ -1,6 +1,7 @@
 import type { AABB, BuildingEntranceDef, CircleCollider, DistrictId, LandmarkDef, StuntRampDef, Vec2 } from '../core/types';
 
 export const WORLD_HALF = 320;
+export const WATER_LEVEL = -0.85;
 export const ROAD_COORDS = [-180, -90, 0, 90, 180] as const;
 export const ROAD_HALF_WIDTH = 8.2;
 export const SIDEWALK_HALF_WIDTH = 13.2;
@@ -11,8 +12,19 @@ export const VAULT_PLAZA_POS: Vec2 = { x: -185, z: -185 };
 export const PIER_YACHT_POS: Vec2 = { x: 334, z: 0 };
 export const FERRIS_WHEEL_POS: Vec2 = { x: 268, z: -30 };
 export const LIGHTHOUSE_POS: Vec2 = { x: -234, z: -234 };
+export const DIVE_SHOP_POS: Vec2 = { x: 222, z: 42 };
 export const HOSPITAL_RESPAWN: Vec2 = { x: 180, z: 90 };
 export const PRECINCT_RESPAWN: Vec2 = { x: -90, z: 0 };
+
+/** Exact ocean surface wave height shared by Water shader, Speedboat buoyancy & Swimming! */
+export function getWaveHeight(x: number, z: number, elapsed: number): number {
+  return (
+    WATER_LEVEL +
+    Math.sin(x * 0.055 + elapsed * 1.65) * 0.18 +
+    Math.cos(z * 0.065 + elapsed * 1.3) * 0.14 +
+    Math.sin((x + z) * 0.095 - elapsed * 2.1) * 0.07
+  );
+}
 
 // Enterable Real-World Building Entrances (seamless walk-in portals along sidewalks!)
 export const BUILDING_ENTRANCES: BuildingEntranceDef[] = [
@@ -72,6 +84,7 @@ export const CITY_LANDMARKS: LandmarkDef[] = [
   { id: 'lm_clothes', name: 'VICE Drip Clothing Store', category: 'building', x: 167, z: -10, color: '#c084fc', description: 'Try on & buy suits, streetwear, resort wear & tactical outfits.', canInviteNova: true },
   { id: 'lm_office', name: 'Apex Corporate Tower', category: 'building', x: -13, z: -42, color: '#00f5ff', description: 'Executive office lobby with Syndicate intel workstations.' },
   { id: 'lm_paynspray', name: 'Neon Pay-n-Spray Garage', category: 'service', x: PAY_N_SPRAY_POS.x, z: PAY_N_SPRAY_POS.z, color: '#00f5ff', description: 'Drive-through free repaint, 100% repair & clears all Wanted Stars!' },
+  { id: 'lm_dive_shop', name: 'Neon Reef Scuba Dive Shop ($75)', category: 'service', x: DIVE_SHOP_POS.x, z: DIVE_SHOP_POS.z, color: '#06b6d4', description: 'Shoreline dive hut — buy 7L / 63 cu ft Scuba Oxygen Mask (30 min underwater swim)!' },
   { id: 'lm_marina', name: 'Ocean Pier Marina (Speedboat)', category: 'transport', x: 242, z: 22, color: '#38bdf8', description: 'Board the luxury Neon Wave Speedboat & cruise the open ocean!' },
   { id: 'lm_cove', name: 'Sunset Beach Cove (Speedboat)', category: 'transport', x: 242, z: 118, color: '#38bdf8', description: 'South beach speedboat launch jetty.' },
   { id: 'lm_heli_ocean', name: 'Ocean Drive Helipad', category: 'transport', x: 150, z: 135, color: '#f8fafc', description: 'Fly the Skyhawk Twin-Turbine helicopter over Neon Coast!' },
@@ -271,6 +284,37 @@ export class CityGrid {
     return false;
   }
 
+  /** Smooth realistic underwater bathymetry (coral reef shelf & deep ocean floor!) */
+  public getSeabedHeight(x: number, z: number): number {
+    // Organic gentle sand dunes along the seafloor
+    const dune = Math.sin(x * 0.045) * Math.cos(z * 0.045) * 0.65 + Math.sin(x * 0.11 + z * 0.08) * 0.25;
+
+    // Causeway NW Bay Channel
+    if ((x >= -144 && x <= -106 && z <= -106) || (z >= -144 && z <= -106 && x <= -106)) {
+      return -7.2 + dune * 0.45;
+    }
+
+    // East Ocean Beach & Coral Reef Shelf (smooth walk-in transition from dry sand to deep ocean!)
+    if (x > 202 && z >= -246 && z <= 246) {
+      if (x <= 244) {
+        const t = (x - 202) / 42;
+        return -t * 1.15;
+      }
+      const reefT = Math.min(1, (x - 244) / 72);
+      const depth = -1.15 - reefT * 10.2;
+      return depth + dune * reefT;
+    }
+
+    // Outer ocean all around the island
+    if (x < -250 || x > 244 || z < -250 || z > 246) {
+      const distOut = Math.max(0, -250 - x, x - 244, -250 - z, z - 246);
+      const t = Math.min(1, distOut / 48);
+      return -2.4 - t * 9.6 + dune * (0.4 + 0.6 * t);
+    }
+
+    return 0;
+  }
+
   public getGroundInfo(x: number, z: number): { height: number; onRamp: StuntRampDef | null; rampSlope: number } {
     let baseH = 0;
 
@@ -284,10 +328,10 @@ export class CityGrid {
       if (x < 224) baseH = ((x - 204) / 20) * 1.8;
       else baseH = 1.8;
     } else if (this.isWater(x, z)) {
-      baseH = -1.6;
+      baseH = this.getSeabedHeight(x, z);
     } else if (x > 202 && x <= 246) {
       const t = Math.min(1, Math.max(0, (x - 202) / 44));
-      baseH = -t * 0.85;
+      baseH = -t * 1.15;
     }
 
     let bestRamp: StuntRampDef | null = null;
